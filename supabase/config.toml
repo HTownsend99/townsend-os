@@ -1,0 +1,2 @@
+[functions.morning-brief]
+verify_jwt = true

@@ -1,12 +1,13 @@
 {
-  "name": "Big Dawg HQ",
-  "short_name": "Big Dawg HQ",
-  "description": "Personal task and bill manager",
+  "id": "/",
+  "name": "Townsend OS",
+  "short_name": "Townsend OS",
+  "description": "A private personal operations workspace.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f0f0f0",
-  "theme_color": "#b8860b",
-  "orientation": "portrait",
+  "background_color": "#fbfcfd",
+  "theme_color": "#14384f",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "/icon-192.png",

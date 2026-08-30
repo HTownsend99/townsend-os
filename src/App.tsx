@@ -1,1044 +1,575 @@
-import { useState, useEffect, useCallback } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { Analytics } from "@vercel/analytics/next";
+import { Analytics } from "@vercel/analytics/react";
+import { supabase } from "./supabaseClient";
+import { billDueLabel, dateForDue, dueLabel, formatAUD, ordinal, toLocalISODate } from "./dateUtils";
+import { Icon } from "./Icon";
+import type { AppPage, Bill, CalendarEvent, DueValue, InboxItem, Priority, Task, TaskView } from "./types";
+import "./App.css";
 
-/* ══════════════════════════════════════════════
-   THEME CONFIG
-   ══════════════════════════════════════════════ */
-const THEMES: Record<string, any> = {
-  "Today":       { bg:"#fff9e6", bg2:"#fff3cc", accent:"#b8860b", border:"#dfc44a", text:"#7a5a00", sub:"#a07800", card:"#fffdf5", check:"#b8860b" },
-  "Upcoming":    { bg:"#e8f4fd", bg2:"#d0e8fa", accent:"#1a6fa0", border:"#7cb8db", text:"#0f4c75", sub:"#2180b0", card:"#f3faff", check:"#1a6fa0" },
-  "Admin":       { bg:"#f3eafa", bg2:"#e6d5f7", accent:"#7d3c98", border:"#b580d0", text:"#5b2d73", sub:"#8e44ad", card:"#faf6fe", check:"#7d3c98" },
-  "Financial":   { bg:"#e8f8ef", bg2:"#d0f0dc", accent:"#1a7a40", border:"#7ec8a0", text:"#145a30", sub:"#22944e", card:"#f4fcf7", check:"#1a7a40" },
-  "Future Buys": { bg:"#fce8fa", bg2:"#f5ccf2", accent:"#c020a0", border:"#e080d0", text:"#8a1878", sub:"#d030a8", card:"#fef4fd", check:"#c020a0" },
-  "Shopping":    { bg:"#fef3e2", bg2:"#fde5c0", accent:"#a06800", border:"#deb060", text:"#7a5000", sub:"#c07800", card:"#fffbf2", check:"#a06800" },
-  "Concepts":    { bg:"#e2f7f5", bg2:"#c8f0ec", accent:"#107870", border:"#70c8c0", text:"#0a5a54", sub:"#149088", card:"#f0fcfa", check:"#107870" },
-  "Long Term":   { bg:"#eeebf7", bg2:"#ddd6f2", accent:"#5040a0", border:"#9888d0", text:"#3a3080", sub:"#6858b8", card:"#f8f6fe", check:"#5040a0" },
-  "Job / Career":{ bg:"#fef5e6", bg2:"#fdeacc", accent:"#a07000", border:"#d8b050", text:"#785400", sub:"#c08a00", card:"#fffbf0", check:"#a07000" },
-  "Health":      { bg:"#e8f5e8", bg2:"#d0ecd0", accent:"#268028", border:"#80c882", text:"#1a6020", sub:"#30a034", card:"#f2fbf2", check:"#268028" },
-  "Socialising": { bg:"#f7e8fa", bg2:"#f0d0f8", accent:"#8828a8", border:"#c080d8", text:"#6a2088", sub:"#a838c0", card:"#fdf4ff", check:"#8828a8" },
-  "Events":      { bg:"#fde8eb", bg2:"#fad0d6", accent:"#b82830", border:"#e08088", text:"#8a1e24", sub:"#d03840", card:"#fef4f5", check:"#b82830" },
-  "Bills":       { bg:"#fef8e6", bg2:"#fdf0c8", accent:"#907000", border:"#c8a840", text:"#6a5200", sub:"#a88800", card:"#fffcf0", check:"#907000" },
+const TASK_CATEGORIES = [
+  "Today",
+  "Upcoming",
+  "Admin",
+  "Financial",
+  "Health",
+  "Future Buys",
+  "Shopping",
+  "Concepts",
+  "Long Term",
+  "Job / Career",
+  "Socialising",
+] as const;
+
+const CATEGORY_COLOURS: Record<string, string> = {
+  Today: "#b07a12",
+  Upcoming: "#1f6f97",
+  Admin: "#71569a",
+  Financial: "#15795b",
+  Health: "#4f7c45",
+  "Future Buys": "#8b5886",
+  Shopping: "#9b6724",
+  Concepts: "#257d78",
+  "Long Term": "#53639b",
+  "Job / Career": "#846c25",
+  Socialising: "#79538d",
 };
 
-// Core task categories (Tasks tab) vs Future Items categories (Future Items tab).
-const CORE_CATS = ["Today","Upcoming","Admin","Financial","Health"];
-const FUTURE_CATS = ["Future Buys","Shopping","Concepts","Long Term","Job / Career","Socialising"];
-// Every category a task can belong to (excludes Events — now a separate table — and Bills).
-const TASK_CATS = [...CORE_CATS, ...FUTURE_CATS];
-const DEF_PRI: Record<string, string> = { "Today":"high","Upcoming":"high","Admin":"medium","Financial":"high","Future Buys":"low","Shopping":"low","Concepts":"medium","Long Term":"low","Job / Career":"high","Health":"medium","Socialising":"low","Events":"high","Bills":"high" };
-
-const DEFAULT_TASKS = [
-  {cat:"Upcoming",name:"Arrange jumper pickup/dropoff from Alfie",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Upcoming",name:"Review pet insurance / consider new policy",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Upcoming",name:"Send Brooke bylaws and redirect water invoice",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Upcoming",name:"Check saved folder from other computer",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Upcoming",name:"Forward BC details to QS",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Admin",name:"Clear out photos",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Admin",name:"Respond to messages",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Admin",name:"Clear out emails",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Admin",name:"Coordinate shipping with Paddy",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Admin",name:"Go through saved photos",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Financial",name:"Prepare tax documents",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Financial",name:"Create spending review",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Financial",name:"Create budget plan",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Financial",name:"Create recurring expenses summary",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Future Buys",name:"Rug",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Future Buys",name:"Genetic testing",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Future Buys",name:"Film Camera",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Shopping",name:"Fix Watches",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Concepts",name:"Power process",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Concepts",name:"HALT (AA)",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Concepts",name:"The Shadow",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Long Term",name:"Barrister",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Long Term",name:"Doctorate",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Long Term",name:"AI OnlyFans",done:false,priority:"low",due:null,urgent:false},
-  {cat:"Long Term",name:"Brag sheet",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Long Term",name:"Brainstorm business ideas",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Job / Career",name:"Update resume",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Job / Career",name:"Contact recruiters",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Job / Career",name:"Apply for positions",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Job / Career",name:"Apply for GAMSAT",done:false,priority:"high",due:{type:"custom",date:"2026-06-30"},urgent:true},
-  {cat:"Job / Career",name:"Draft career plan",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Health",name:"Prepare gym program",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Health",name:"Prepare meal plan and track calories",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Health",name:"Write goals for 2026",done:false,priority:"high",due:null,urgent:false},
-  {cat:"Health",name:"Prepare journal questions",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Health",name:"Create list of habits and daily routine",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Socialising",name:"Sign up to social netball",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Socialising",name:"Enquire about rowing",done:false,priority:"medium",due:null,urgent:false},
-  {cat:"Socialising",name:"Post on Instagram",done:false,priority:"low",due:null,urgent:false},
+const FUTURE_CATEGORIES = new Set(["Future Buys", "Shopping", "Concepts", "Long Term", "Job / Career", "Socialising"]);
+const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
+  { id: "tasks", label: "Tasks", icon: "check-square" },
+  { id: "calendar", label: "Calendar", icon: "calendar" },
+  { id: "inbox", label: "Inbox", icon: "inbox" },
+  { id: "bills", label: "Bills", icon: "credit-card" },
 ];
 
-const DEFAULT_BILLS = [
-  { name: "Mortgage — Bendigo Bank", amount: 3088, freq: "Monthly", day: 16 },
-  { name: "Rent", amount: 280, freq: "Weekly", day: 4 },
+const PREVIEW_TASKS: Task[] = [
+  { id: 1, user_id: "preview", cat: "Today", name: "Review the morning brief", done: false, priority: "high", due: { type: "today" }, urgent: true },
+  { id: 2, user_id: "preview", cat: "Admin", name: "Prepare documents for Friday", done: false, priority: "medium", due: { type: "tomorrow" }, urgent: false },
+  { id: 3, user_id: "preview", cat: "Health", name: "Plan next week's training", done: false, priority: "low", due: null, urgent: false },
+  { id: 4, user_id: "preview", cat: "Long Term", name: "Outline the next quarterly goal", done: false, priority: "medium", due: { type: "month" }, urgent: false },
+  { id: 5, user_id: "preview", cat: "Today", name: "Complete weekly review", done: true, priority: "high", due: { type: "today" }, urgent: false, completed_at: new Date().toISOString() },
+];
+const PREVIEW_BILLS: Bill[] = [
+  { id: 1, user_id: "preview", name: "Home internet", amount: 89, freq: "Monthly", day: 12 },
+  { id: 2, user_id: "preview", name: "Gym membership", amount: 24, freq: "Weekly", day: 1 },
+];
+const PREVIEW_EVENTS: CalendarEvent[] = [
+  { id: 1, user_id: "preview", title: "Weekly planning", date: toLocalISODate(new Date()), time: "08:30", note: null },
+];
+const PREVIEW_INBOX: InboxItem[] = [
+  { id: 1, user_id: "preview", item_type: "message", sender: "Alex", platform: "Messages", subject: null, content: "Can we confirm the time for tomorrow?", age: "2h", flag: "Reply", priority: 1, archived: false },
+  { id: 2, user_id: "preview", item_type: "email", sender: "Building manager", platform: "Email", subject: "Annual access review", content: "Please review the attached access details this week.", age: "1d", flag: "Review", priority: 2, archived: false },
 ];
 
-/* ══════════════════════════════════════════════
-   HELPERS
-   ══════════════════════════════════════════════ */
-function getDueLabel(due: any) {
-  if (!due) return null;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (due.type === "today") return { text: "Today", cls: "due-today" };
-  if (due.type === "tomorrow") return { text: "Tomorrow", cls: "has-date" };
-  if (due.type === "week") return { text: "This week", cls: "has-date" };
-  if (due.type === "month") return { text: "This month", cls: "has-date" };
-  if (due.type === "custom" && due.date) {
-    const d = new Date(due.date + "T00:00:00");
-    const diff = Math.ceil((d.getTime() - today.getTime()) / 86400000);
-    const label = d.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
-    if (diff < 0) return { text: "⚠ " + label, cls: "overdue" };
-    if (diff === 0) return { text: "Today", cls: "due-today" };
-    if (diff === 1) return { text: "Tomorrow", cls: "has-date" };
-    return { text: label, cls: "has-date" };
-  }
-  return null;
+type Toast = { message: string; error?: boolean } | null;
+
+function friendlyError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) return String(error.message);
+  return "Something went wrong. Please try again.";
 }
 
-function getBillDue(bill: any) {
-  const now = new Date();
-  if (bill.freq === "Monthly") {
-    const d = bill.day - now.getDate();
-    if (d < 0) return { label: `Overdue (${Math.abs(d)}d)`, cls: "due-overdue" };
-    if (d <= 5) return { label: `Due in ${d}d`, cls: "due-soon" };
-    return { label: `Due in ${d}d`, cls: "due-ok" };
-  }
-  if (bill.freq === "Weekly") {
-    const d = (bill.day - now.getDay() + 7) % 7 || 7;
-    if (d <= 1) return { label: d === 0 ? "Due today" : "Tomorrow", cls: "due-soon" };
-    return { label: `Due in ${d}d`, cls: "due-ok" };
-  }
-  return { label: "", cls: "" };
-}
+function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-function getTaskDate(due: any): string | null {
-  if (!due) return null;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (due.type === "today") return today.toISOString().slice(0, 10);
-  if (due.type === "tomorrow") { const d = new Date(today); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); }
-  if (due.type === "week") { const d = new Date(today); d.setDate(d.getDate() + (7 - d.getDay())); return d.toISOString().slice(0, 10); }
-  if (due.type === "month") { const d = new Date(today.getFullYear(), today.getMonth() + 1, 0); return d.toISOString().slice(0, 10); }
-  if (due.type === "custom" && due.date) return due.date;
-  return null;
-}
-
-const FONT = "'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
-
-// Shared pill geometry so the control column lines up perfectly across every row.
-const pillBase: any = { fontSize: 11, fontWeight: 700 as const, height: 26, lineHeight: "24px", borderRadius: 7, cursor: "pointer" as const, whiteSpace: "nowrap" as const, textAlign: "center" as const, boxSizing: "border-box" as const, display: "inline-block", fontFamily: FONT, padding: 0 };
-
-const priStyle = (p: string) => {
-  const w = { ...pillBase, width: 60 };
-  if (p === "high") return { ...w, background: "#fee2e2", color: "#b91c1c", border: "1px solid #fca5a5" };
-  if (p === "low") return { ...w, background: "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd" };
-  return { ...w, background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" };
-};
-
-const dueStyle = (dl: any) => {
-  const base: any = { ...pillBase, width: 86, fontWeight: 600 as const, overflow: "hidden", textOverflow: "ellipsis", border: "1px dashed #d1d5db", color: "#9ca3af", background: "transparent" };
-  if (!dl) return base;
-  if (dl.cls === "overdue") return { ...base, border: "1px solid #fca5a5", color: "#dc2626", background: "#fef2f2" };
-  if (dl.cls === "due-today") return { ...base, border: "1px solid #fcd34d", color: "#d97706", background: "#fffbeb" };
-  return { ...base, border: "1px solid #93c5fd", color: "#2563eb", background: "#eff6ff" };
-};
-
-// Kebab / overflow button — single big touch target for Move + Delete.
-const kebabStyle: any = { width: 28, height: 26, borderRadius: 7, border: "1px solid #e5e7eb", color: "#9ca3af", cursor: "pointer", background: "transparent", fontSize: 15, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0 };
-
-/* ══════════════════════════════════════════════
-   INBOX DATA
-   ══════════════════════════════════════════════ */
-const INBOX_MESSAGES = [
-  { id: 1, sender: "Brad Hunter", platform: "LinkedIn", platformColor: "#0a66c2", platformBg: "#e8f4fd", content: "Fortune 500 in-house Property Counsel role, Sydney, WFH flex. Call arranged — you sent your number, he replied \"Looking forward to it 👌\"", age: "3 days ago", flag: "Call pending", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 2, sender: "Lyndsey Warren", platform: "LinkedIn", platformColor: "#0a66c2", platformBg: "#e8f4fd", content: "Engage Personnel. Asked what type of firm and role you're after so she can match you. Awaiting your brief.", age: "12 days ago", flag: "Reply owed", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 3, sender: "Peter Dallimer", platform: "LinkedIn", platformColor: "#0a66c2", platformBg: "#e8f4fd", content: "TAP — runs the Sydney private-practice legal desk. Wants a call to understand your motivators; flexible on timing.", age: "13 days ago", flag: "Reply owed", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 4, sender: "Marianna Tuccia", platform: "LinkedIn", platformColor: "#0a66c2", platformBg: "#e8f4fd", content: "Empire Group, 18 yrs placing Sydney lawyers. Wants a chat; offered to send their updated salary guide.", age: "14 days ago", flag: "Reply owed", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 5, sender: "+61 448 740 112", platform: "iMessage", platformColor: "#1e8449", platformBg: "#e8f8ef", content: "Supportive conversation about your career change — MD plan, cafe job, chill law role. Last message: \"I'm glad you've found something to look forward to.\"", age: "3 days ago", flag: "Worth a reply", flagColor: "#1a7a40", flagBg: "#e8f8ef", priority: 2 },
-  { id: 6, sender: "Aunty Kirsten (+61 428 381 060)", platform: "iMessage", platformColor: "#1e8449", platformBg: "#e8f8ef", content: "Replied \"Thanks Hamish xx\" to your condolence message about Isaac. Closed naturally.", age: "3 days ago", flag: "No action", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 7, sender: "ANDY 🦈", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Gym banter. Last message: \"250mg creatine\" + laugh emoji.", age: "3 days ago", flag: "Optional", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 8, sender: "Fernanda Colares", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Ongoing personal conversation. No action item.", age: "2 days ago", flag: "Optional", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 9, sender: "Kai Heath", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Shared hairdresser profile @matteobarbari.hair — looks like a recommendation.", age: "5 days ago", flag: "Optional", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 10, sender: "Maximillian", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Story reaction — \"Vibes\". Not a real thread.", age: "9 days ago", flag: "No action", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 11, sender: "liam.mls", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Story reaction — \"Win big baby\". Not a real thread.", age: "15 days ago", flag: "No action", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 12, sender: "48 Laws of Power (group)", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Jack Milner, liam.mls. Group banter, nothing directed at you.", age: "3 days ago", flag: "No action", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 13, sender: "NBA Chad Lads (muted)", platform: "Instagram", platformColor: "#b8338c", platformBg: "#fce8f4", content: "Muted group. Banter only.", age: "9 days ago", flag: "No action", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-];
-
-const INBOX_EMAILS = [
-  { id: 1, sender: "Strata Manager", subject: "AGM Date — Thursday 10 September 2026", content: "Manager proposing the Annual General Meeting be held Thu 10 Sep 2026. Needs a committee response to lock the date.", age: "Recent", flag: "Respond", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 2, sender: "Sonder Consultants", subject: "Real Estate Lawyer opportunity", content: "Leading real estate practice looking to add a solicitor. Relevant to your search — skim and decide if worth replying.", age: "~2 days", flag: "Review", flagColor: "#d97706", flagBg: "#fffbeb", priority: 1 },
-  { id: 3, sender: "Alex Correa", subject: "Executive Real Estate Lawyer role", content: "Significant real estate work, industry-leading firm. Same bucket as Sonder — review and decide.", age: "~3 days", flag: "Review", flagColor: "#d97706", flagBg: "#fffbeb", priority: 1 },
-  { id: 4, sender: "Seek", subject: "New job recommendations for you (x2)", content: "Two automated job recommendation emails. Low signal but worth a 30-second scan given your active search.", age: "1-4 days", flag: "Skim", flagColor: "#2563eb", flagBg: "#eff6ff", priority: 2 },
-  { id: 5, sender: "Apple / ChatGPT", subject: "ChatGPT Plus expires 28 Jun — $29.99/mo", content: "Subscription expiring in 7 days. Decide whether to renew or cancel (you're transitioning to Claude).", age: "Recent", flag: "Decide by 28 Jun", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 6, sender: "Apple / Tinder", subject: "Tinder Plus renews 27 Jun", content: "Auto-renews in days. Decide keep or cancel.", age: "Recent", flag: "Decide by 27 Jun", flagColor: "#dc2626", flagBg: "#fef2f2", priority: 1 },
-  { id: 7, sender: "Apple / NordVPN", subject: "NordVPN — $20.99/mo, renews 20 Jul", content: "Subscription confirmed and active. No action required yet.", age: "Recent", flag: "Note", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 8, sender: "Instagram", subject: "Security cluster — password changed, account public, new logins", content: "Password changed + account switched to public + 2 new logins (Linux/Chrome + Mac/Chrome, Sydney). Likely Beeper setup — verify it was you.", age: "Recent", flag: "Verify", flagColor: "#d97706", flagBg: "#fffbeb", priority: 2 },
-  { id: 9, sender: "Google / Composio", subject: "Composio granted access to Google account", content: "Access granted via OAuth. Likely your integration setup. Verify if intentional.", age: "Recent", flag: "Verify", flagColor: "#d97706", flagBg: "#fffbeb", priority: 2 },
-  { id: 10, sender: "Steam", subject: "New device logins + Guard codes", content: "Two new-device logins with Guard codes sent. Likely you — verify if not.", age: "Recent", flag: "Likely you", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 11, sender: "Beeper", subject: "Welcome + login code", content: "Onboarding emails from your Beeper signup. No action.", age: "Recent", flag: "Onboarding", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 12, sender: "Apple / Telstra", subject: "Receipts — payments, refunds, data alerts", content: "Apple refund $19.99 (Tinder), payments $49.98 & $20.99. Telstra data reset 22 Jun. me&u / Assembly / Steam receipts. No action.", age: "Recent", flag: "Receipts", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-  { id: 13, sender: "ACE Newsletter / NordVPN promos", subject: "Marketing & setup emails (x5)", content: "ACE newsletter x2, NordVPN setup/connect prompts x2, Nord-Google linked. Safe to archive.", age: "Recent", flag: "Archive", flagColor: "#9ca3af", flagBg: "#f3f4f6", priority: 3 },
-];
-
-/* ══════════════════════════════════════════════
-   MAIN APP
-   ══════════════════════════════════════════════ */
-export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPass, setAuthPass] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
-
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [bills, setBills] = useState<any[]>([]);
-  const [events, setEvents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const [page, setPage] = useState<"tasks" | "future" | "calendar" | "bills" | "inbox" | "completed">("tasks");
-  const [activeTab, setActiveTab] = useState("All");
-  const [futureTab, setFutureTab] = useState("All");
-  const [dueModal, setDueModal] = useState<number | null>(null);
-  const [moveModal, setMoveModal] = useState<number | null>(null);
-  const [actionSheet, setActionSheet] = useState<number | null>(null);
-  const [addBillModal, setAddBillModal] = useState(false);
-  const [newBill, setNewBill] = useState({ name: "", amount: "", freq: "Monthly", day: "1" });
-  const [addInput, setAddInput] = useState("");
-  const [addCat, setAddCat] = useState("Today");
-  const [customDate, setCustomDate] = useState("");
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-
-  const [calMonth, setCalMonth] = useState(new Date().getMonth());
-  const [calYear, setCalYear] = useState(new Date().getFullYear());
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [calTab, setCalTab] = useState<"events" | "due">("due");
-  const [addEventModal, setAddEventModal] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", note: "" });
-  const [deleteEventConfirm, setDeleteEventConfirm] = useState<number | null>(null);
-
-  const [inboxTab, setInboxTab] = useState<"messages" | "email">("messages");
-
-  /* ── Auth ── */
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoading(false); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => listener.subscription.unsubscribe();
+    const dialog = dialogRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? []).filter((item) => !item.hasAttribute("disabled"));
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previous?.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <div className="dialog-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div className="dialog-head">
+          <h2 id="dialog-title">{title}</h2>
+          <button className="icon-button" onClick={onClose} aria-label="Close dialog"><Icon name="x" /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Login({ onToast }: { onToast: (toast: Toast) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (resetMode) {
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+        if (resetError) throw resetError;
+        onToast({ message: "Password reset instructions sent." });
+        setResetMode(false);
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+      }
+    } catch (caught) {
+      setError(friendlyError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card" aria-labelledby="auth-title">
+        <div className="auth-brand">
+          <img className="brand-mark" src="/mark.svg" alt="" />
+          <h1 id="auth-title">Townsend OS</h1>
+          <p>{resetMode ? "Reset your password" : "Your private operations workspace"}</p>
+        </div>
+        <form className="auth-form" onSubmit={submit}>
+          {error && <div className="form-error" role="alert">{error}</div>}
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input id="email" className="input" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+          </div>
+          {!resetMode && (
+            <div className="field">
+              <label htmlFor="password">Password</label>
+              <input id="password" className="input" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+            </div>
+          )}
+          <button className="button full" disabled={busy}>{busy ? "Please wait…" : resetMode ? "Send reset link" : "Sign in"}</button>
+          <button className="text-button" type="button" onClick={() => { setResetMode((value) => !value); setError(""); }}>
+            {resetMode ? "Back to sign in" : "Forgot your password?"}
+          </button>
+        </form>
+        <div className="auth-footer">PRIVATE · AUTHENTICATED · ENCRYPTED IN TRANSIT</div>
+      </section>
+    </main>
+  );
+}
+
+function PasswordRecovery({ onComplete, onToast }: { onComplete: () => void; onToast: (toast: Toast) => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (password.length < 10) { setError("Use at least 10 characters."); return; }
+    if (password !== confirmation) { setError("The passwords do not match."); return; }
+    setBusy(true); setError("");
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) throw updateError;
+      onToast({ message: "Password updated." });
+      onComplete();
+    } catch {
+      setError("Unable to update the password. Request a new reset link and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="auth-shell"><section className="auth-card" aria-labelledby="recovery-title">
+      <div className="auth-brand"><img className="brand-mark" src="/mark.svg" alt="" /><h1 id="recovery-title">Choose a new password</h1><p>Secure your Townsend OS account.</p></div>
+      <form className="auth-form" onSubmit={submit}>
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <div className="field"><label htmlFor="new-password">New password</label><input id="new-password" className="input" type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(event) => setPassword(event.target.value)} /></div>
+        <div className="field"><label htmlFor="confirm-password">Confirm new password</label><input id="confirm-password" className="input" type="password" autoComplete="new-password" required minLength={10} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></div>
+        <button className="button full" disabled={busy}>{busy ? "Updating…" : "Update password"}</button>
+      </form>
+    </section></main>
+  );
+}
+
+function TaskRow({ task, onToggle, onActions }: { task: Task; onToggle: () => void; onActions: () => void }) {
+  const due = dueLabel(task.due);
+  return (
+    <article className={`task-row${task.done ? " done" : ""}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] ?? "#1f6f97" } as React.CSSProperties}>
+      <button className="check-button" onClick={onToggle} aria-label={`${task.done ? "Reopen" : "Complete"} ${task.name}`}>
+        <span className="check-circle">{task.done && <Icon name="check" size={14} />}</span>
+      </button>
+      <div className="task-copy">
+        <span className="task-name">{task.name}</span>
+        <span className="task-meta">
+          <span className="badge neutral">{task.cat}</span>
+          <span className={`badge badge-dot ${task.priority === "high" ? "danger" : task.priority === "medium" ? "warning" : "info"}`}>{task.priority}</span>
+          {due && <span className={`badge ${due.tone}`}>{due.text}</span>}
+        </span>
+      </div>
+      <button className="icon-button" onClick={onActions} aria-label={`Actions for ${task.name}`}><Icon name="more-horizontal" /></button>
+    </article>
+  );
+}
+
+function TaskActionDialog({ task, saving, onClose, onUpdate, onDelete }: {
+  task: Task;
+  saving: boolean;
+  onClose: () => void;
+  onUpdate: (changes: Partial<Task>) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <Dialog title={task.name} onClose={onClose}>
+      <div className="action-list">
+        <button className="button secondary" disabled={saving} onClick={() => onUpdate({ done: !task.done, completed_at: task.done ? null : new Date().toISOString() })}>
+          <Icon name="check" /> {task.done ? "Move back to active" : "Mark complete"}
+        </button>
+        <button className="button secondary" disabled={saving} onClick={() => onUpdate({ urgent: !task.urgent })}>
+          <Icon name="flag" /> {task.urgent ? "Remove urgent flag" : "Mark urgent"}
+        </button>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="task-priority">Priority</label>
+            <select id="task-priority" className="select" value={task.priority} disabled={saving} onChange={(event) => onUpdate({ priority: event.target.value as Priority })}>
+              <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="task-category">Category</label>
+            <select id="task-category" className="select" value={task.cat} disabled={saving} onChange={(event) => onUpdate({ cat: event.target.value })}>
+              {TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="task-due">Due date</label>
+          <input id="task-due" className="input" type="date" disabled={saving} value={dateForDue(task.due) ?? ""} onChange={(event) => onUpdate({ due: event.target.value ? { type: "custom", date: event.target.value } : null })} />
+        </div>
+        <button className="button danger" disabled={saving} onClick={onDelete}><Icon name="trash-2" /> Delete task</button>
+      </div>
+    </Dialog>
+  );
+}
+
+function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
+  tasks: Task[];
+  saving: boolean;
+  onAdd: (name: string, cat: string) => void;
+  onToggle: (task: Task) => void;
+  onUpdate: (task: Task, changes: Partial<Task>) => void;
+  onDelete: (task: Task) => void;
+}) {
+  const [view, setView] = useState<TaskView>("active");
+  const [category, setCategory] = useState("All");
+  const [newTask, setNewTask] = useState("");
+  const [newCategory, setNewCategory] = useState("Today");
+  const [selected, setSelected] = useState<Task | null>(null);
+  const filtered = tasks.filter((task) => {
+    if (view === "completed" && !task.done) return false;
+    if (view !== "completed" && task.done) return false;
+    if (view === "active" && FUTURE_CATEGORIES.has(task.cat)) return false;
+    if (view === "future" && !FUTURE_CATEGORIES.has(task.cat)) return false;
+    return category === "All" || task.cat === category;
+  });
+  const availableCategories = TASK_CATEGORIES.filter((item) => view === "completed" || (view === "future" ? FUTURE_CATEGORIES.has(item) : !FUTURE_CATEGORIES.has(item)));
+  const urgent = tasks.filter((task) => !task.done && (task.urgent || task.priority === "high")).length;
+  const done = tasks.filter((task) => task.done).length;
+
+  useEffect(() => setCategory("All"), [view]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const value = newTask.trim();
+    if (!value) return;
+    onAdd(value, newCategory);
+    setNewTask("");
+  };
+
+  return (
+    <main className="content tasks-page">
+      <div className="page-heading"><div><h1>Tasks</h1><p>Focus the day, then keep the longer horizon visible.</p></div></div>
+      <div className="stat-grid" aria-label="Task summary">
+        <div className="stat"><strong>{tasks.filter((task) => !task.done).length}</strong><span className="overline">Open</span></div>
+        <div className="stat danger"><strong>{urgent}</strong><span className="overline">Priority</span></div>
+        <div className="stat success"><strong>{done}</strong><span className="overline">Complete</span></div>
+      </div>
+      <div className="segmented" role="group" aria-label="Task view">
+        {(["active", "future", "completed"] as TaskView[]).map((item) => <button key={item} className={`segment${view === item ? " active" : ""}`} onClick={() => setView(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}
+      </div>
+      <div className="filter-row" aria-label="Filter by category">
+        {["All", ...availableCategories].map((item) => <button key={item} className={`filter${category === item ? " active" : ""}`} onClick={() => setCategory(item)}>{item}</button>)}
+      </div>
+      <section className="panel" style={{ "--accent": CATEGORY_COLOURS[category] ?? "#14384f" } as React.CSSProperties}>
+        <div className="panel-header"><div className="panel-title"><h2>{category === "All" ? `${view[0].toUpperCase() + view.slice(1)} tasks` : category}</h2><p>{filtered.length} {filtered.length === 1 ? "item" : "items"}</p></div></div>
+        <div className="panel-body">
+          {filtered.length ? filtered.map((task) => <TaskRow key={task.id} task={task} onToggle={() => onToggle(task)} onActions={() => setSelected(task)} />) : <div className="empty-state">Nothing here. Add a task when you are ready.</div>}
+        </div>
+      </section>
+      {view !== "completed" && (
+        <form className="composer" onSubmit={submit}>
+          <label className="sr-only" htmlFor="new-task">New task</label>
+          <input id="new-task" className="input" placeholder="Add a task…" value={newTask} onChange={(event) => setNewTask(event.target.value)} />
+          <label className="sr-only" htmlFor="new-task-category">Category</label>
+          <select id="new-task-category" className="select" value={newCategory} onChange={(event) => setNewCategory(event.target.value)}>{TASK_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select>
+          <button className="button" disabled={saving || !newTask.trim()} aria-label="Add task"><Icon name="plus" /></button>
+        </form>
+      )}
+      {selected && <TaskActionDialog task={tasks.find((task) => task.id === selected.id) ?? selected} saving={saving} onClose={() => setSelected(null)} onUpdate={(changes) => onUpdate(selected, changes)} onDelete={() => { onDelete(selected); setSelected(null); }} />}
+    </main>
+  );
+}
+
+function CalendarPage({ tasks, events, saving, onAdd, onDelete }: { tasks: Task[]; events: CalendarEvent[]; saving: boolean; onAdd: (event: Omit<CalendarEvent, "id" | "user_id">) => void; onDelete: (event: CalendarEvent) => void }) {
+  const today = new Date();
+  const [month, setMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const [selected, setSelected] = useState(toLocalISODate(today));
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [time, setTime] = useState("");
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const leading = new Date(year, monthIndex, 1).getDay();
+  const count = new Date(year, monthIndex + 1, 0).getDate();
+  const days = Array.from({ length: leading + count }, (_, index) => index < leading ? null : index - leading + 1);
+  const datedTasks = tasks.filter((task) => dateForDue(task.due) === selected);
+  const datedEvents = events.filter((event) => event.date === selected);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+    onAdd({ title: title.trim(), date: selected, time: time || null, note: null });
+    setTitle(""); setTime(""); setAdding(false);
+  };
+
+  return (
+    <main className="content">
+      <div className="page-heading"><div><h1>Calendar</h1><p>Tasks and events, arranged by date.</p></div><button className="button" onClick={() => setAdding(true)}><Icon name="plus" /> Add event</button></div>
+      <section className="calendar-card">
+        <div className="calendar-head">
+          <button className="icon-button" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))} aria-label="Previous month"><Icon name="chevron-left" /></button>
+          <h2>{month.toLocaleDateString("en-AU", { month: "long", year: "numeric" })}</h2>
+          <button className="icon-button" onClick={() => setMonth(new Date(year, monthIndex + 1, 1))} aria-label="Next month"><Icon name="chevron-right" /></button>
+        </div>
+        <div className="calendar-grid">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div className="weekday" key={day}>{day}</div>)}
+          {days.map((day, index) => {
+            if (!day) return <div key={`blank-${index}`} />;
+            const date = toLocalISODate(new Date(year, monthIndex, day));
+            const hasItems = events.some((item) => item.date === date) || tasks.some((task) => dateForDue(task.due) === date);
+            const className = `calendar-day${date === toLocalISODate(today) ? " today" : ""}${date === selected ? " selected" : ""}`;
+            return <button key={date} className={className} onClick={() => setSelected(date)} aria-label={new Date(`${date}T00:00:00`).toLocaleDateString("en-AU", { dateStyle: "full" })}>{day}{hasItems && <span className="dots"><span className="dot" /></span>}</button>;
+          })}
+        </div>
+      </section>
+      <div className="section-heading"><h2>{new Date(`${selected}T00:00:00`).toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h2></div>
+      {!datedTasks.length && !datedEvents.length && <div className="empty-state panel">No tasks or events on this date.</div>}
+      {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
+      {datedEvents.map((item) => <div className="event-row" key={`event-${item.id}`}><Icon name="calendar" /><div className="row-main"><strong>{item.title}</strong><p>{item.time || "All day"}{item.note ? ` · ${item.note}` : ""}</p></div><button className="icon-button danger" disabled={saving} onClick={() => onDelete(item)} aria-label={`Delete ${item.title}`}><Icon name="trash-2" /></button></div>)}
+      {adding && <Dialog title="Add event" onClose={() => setAdding(false)}><form onSubmit={submit}><div className="field"><label htmlFor="event-title">Event name</label><input id="event-title" className="input" required value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field-row"><div className="field"><label htmlFor="event-date">Date</label><input id="event-date" className="input" type="date" required value={selected} onChange={(event) => setSelected(event.target.value)} /></div><div className="field"><label htmlFor="event-time">Time</label><input id="event-time" className="input" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></div></div><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setAdding(false)}>Cancel</button><button className="button" disabled={saving}>Add event</button></div></form></Dialog>}
+    </main>
+  );
+}
+
+function InboxPage({ items, saving, onArchive }: { items: InboxItem[]; saving: boolean; onArchive: (item: InboxItem) => void }) {
+  const [tab, setTab] = useState<"message" | "email">("message");
+  const current = items.filter((item) => !item.archived && item.item_type === tab).sort((a, b) => a.priority - b.priority);
+  const priority = current.filter((item) => item.priority === 1).slice(0, 3);
+  return (
+    <main className="content">
+      <div className="page-heading"><div><h1>Inbox</h1><p>Authenticated items that may need a response or action.</p></div></div>
+      <div className="stat-grid" aria-label="Inbox summary"><div className="stat"><strong>{items.filter((item) => !item.archived).length}</strong><span className="overline">Open</span></div><div className="stat danger"><strong>{items.filter((item) => !item.archived && item.priority === 1).length}</strong><span className="overline">Priority</span></div><div className="stat success"><strong>{items.filter((item) => item.archived).length}</strong><span className="overline">Archived</span></div></div>
+      <div className="segmented" role="group" aria-label="Inbox type"><button className={`segment${tab === "message" ? " active" : ""}`} onClick={() => setTab("message")}>Messages</button><button className={`segment${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email</button></div>
+      {priority.length > 0 && <aside className="triage"><span className="overline">Do these first</span><ol>{priority.map((item) => <li key={item.id}>{item.subject || `${item.platform || "Message"} from ${item.sender}`}</li>)}</ol></aside>}
+      {!current.length && <div className="empty-state panel">No open {tab === "message" ? "messages" : "emails"}.</div>}
+      {current.map((item) => <article className="inbox-card" key={item.id} style={{ "--accent": item.priority === 1 ? "#ae3b2e" : item.priority === 2 ? "#b07a12" : "#1f6f97" } as React.CSSProperties}><div className="inbox-head"><div><div className="inbox-sender">{item.sender}</div><div className="task-meta"><span className="badge neutral">{item.platform || (tab === "message" ? "Message" : "Email")}</span>{item.flag && <span className="badge warning">{item.flag}</span>}</div></div><span className="inbox-age">{item.age || ""}</span></div>{item.subject && <div className="inbox-subject">{item.subject}</div>}<p className="inbox-content">{item.content}</p><div className="dialog-actions"><button className="button secondary" disabled={saving} onClick={() => onArchive(item)}><Icon name="archive" /> Archive</button></div></article>)}
+    </main>
+  );
+}
+
+function BillsPage({ bills, saving, onAdd, onDelete }: { bills: Bill[]; saving: boolean; onAdd: (bill: Omit<Bill, "id" | "user_id">) => void; onDelete: (bill: Bill) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [freq, setFreq] = useState<Bill["freq"]>("Monthly");
+  const [day, setDay] = useState("1");
+  const monthly = bills.reduce((sum, bill) => sum + (bill.freq === "Weekly" ? bill.amount * 52 / 12 : bill.amount), 0);
+  const submit = (event: FormEvent) => { event.preventDefault(); const numeric = Number(amount); if (!name.trim() || !Number.isFinite(numeric) || numeric < 0) return; onAdd({ name: name.trim(), amount: numeric, freq, day: Number(day) }); setName(""); setAmount(""); setDay("1"); setAdding(false); };
+  return (
+    <main className="content">
+      <div className="page-heading"><div><h1>Bills</h1><p>Recurring commitments and their next due date.</p></div><button className="button" onClick={() => setAdding(true)}><Icon name="plus" /> Add bill</button></div>
+      <div className="stat-grid"><div className="stat"><strong>{bills.length}</strong><span className="overline">Recurring</span></div><div className="stat"><strong>{formatAUD(monthly)}</strong><span className="overline">Monthly est.</span></div><div className="stat success"><strong>{formatAUD(monthly * 12)}</strong><span className="overline">Annual est.</span></div></div>
+      {!bills.length && <div className="empty-state panel">No recurring bills yet.</div>}
+      {bills.map((bill) => { const due = billDueLabel(bill); return <article className="bill-row" key={bill.id} style={{ "--accent": "#b07a12" } as React.CSSProperties}><Icon name="credit-card" /><div className="row-main"><strong>{bill.name}</strong><p>{bill.freq} · {bill.freq === "Monthly" ? ordinal(bill.day) : ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][bill.day]} · <span className={`badge ${due.tone}`}>{due.text}</span></p></div><span className="row-value">{formatAUD(bill.amount)}</span><button className="icon-button danger" disabled={saving} onClick={() => onDelete(bill)} aria-label={`Delete ${bill.name}`}><Icon name="trash-2" /></button></article>; })}
+      {adding && <Dialog title="Add recurring bill" onClose={() => setAdding(false)}><form onSubmit={submit}><div className="field"><label htmlFor="bill-name">Bill name</label><input id="bill-name" className="input" required value={name} onChange={(event) => setName(event.target.value)} /></div><div className="field-row"><div className="field"><label htmlFor="bill-amount">Amount (AUD)</label><input id="bill-amount" className="input" type="number" min="0" step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)} /></div><div className="field"><label htmlFor="bill-frequency">Frequency</label><select id="bill-frequency" className="select" value={freq} onChange={(event) => setFreq(event.target.value as Bill["freq"])}><option>Monthly</option><option>Weekly</option></select></div></div><div className="field"><label htmlFor="bill-day">{freq === "Monthly" ? "Day of month" : "Day of week (0 Sunday to 6 Saturday)"}</label><input id="bill-day" className="input" type="number" min={freq === "Monthly" ? 1 : 0} max={freq === "Monthly" ? 31 : 6} required value={day} onChange={(event) => setDay(event.target.value)} /></div><div className="dialog-actions"><button className="button secondary" type="button" onClick={() => setAdding(false)}>Cancel</button><button className="button" disabled={saving}>Add bill</button></div></form></Dialog>}
+    </main>
+  );
+}
+
+export default function App() {
+  const preview = import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState<AppPage>("tasks");
+  const [tasks, setTasks] = useState<Task[]>(preview ? PREVIEW_TASKS : []);
+  const [bills, setBills] = useState<Bill[]>(preview ? PREVIEW_BILLS : []);
+  const [events, setEvents] = useState<CalendarEvent[]>(preview ? PREVIEW_EVENTS : []);
+  const [inbox, setInbox] = useState<InboxItem[]>(preview ? PREVIEW_INBOX : []);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState<Toast>(null);
+  const userId = session?.user.id;
+
+  const showToast = useCallback((next: Toast) => {
+    setToast(next);
+    if (next) window.setTimeout(() => setToast(null), 3600);
   }, []);
 
-  /* ── Data fetch ── */
-  const fetchData = useCallback(async () => {
-    if (!session) return;
-    const userId = session.user.id;
-    const [tRes, bRes, evRes] = await Promise.all([
-      supabase.from("tasks").select("*").order("id"),
-      supabase.from("bills").select("*").order("id"),
-      supabase.from("events").select("*").order("date"),
-    ]);
-    const eventsTableOk = !evRes.error;
-
-    // ── Tasks (seed defaults on first run) ──
-    let t = tRes.data || [];
-    if (t.length === 0) {
-      const rows = DEFAULT_TASKS.map(d => ({ ...d, user_id: userId }));
-      const { data: inserted } = await supabase.from("tasks").insert(rows).select();
-      t = inserted || [];
-    }
-
-    // ── One-time migration: legacy "Events" category tasks → events table ──
-    let ev = evRes.data || [];
-    if (eventsTableOk) {
-      const legacy = t.filter(x => x.cat === "Events");
-      if (legacy.length > 0) {
-        const evRows = legacy.map(x => ({ user_id: userId, title: x.name, date: getTaskDate(x.due), time: null, note: null }));
-        const { data: insEv } = await supabase.from("events").insert(evRows).select();
-        await supabase.from("tasks").delete().in("id", legacy.map(x => x.id));
-        t = t.filter(x => x.cat !== "Events");
-        if (insEv) ev = [...ev, ...insEv];
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data, error: sessionError }) => {
+      if (sessionError) setError("Unable to restore your session. Please sign in again.");
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next);
+      setAuthReady(true);
+      if (event === "PASSWORD_RECOVERY") setRecovering(true);
+      if (!next && !preview) {
+        setTasks([]);
+        setBills([]);
+        setEvents([]);
+        setInbox([]);
       }
-    }
-    setTasks(t);
-    setEvents(ev);
+    });
+    return () => data.subscription.unsubscribe();
+  }, [preview]);
 
-    // ── Bills (seed defaults on first run) ──
-    if (bRes.data && bRes.data.length > 0) setBills(bRes.data);
+  const fetchData = useCallback(async () => {
+    if (preview) return;
+    if (!userId) return;
+    setLoading(true); setError("");
+    const [taskResult, billResult, eventResult, inboxResult] = await Promise.all([
+      supabase.from("tasks").select("*").order("created_at", { ascending: true }),
+      supabase.from("bills").select("*").order("created_at", { ascending: true }),
+      supabase.from("events").select("*").order("date", { ascending: true }),
+      supabase.from("inbox_items").select("*").order("priority", { ascending: true }).order("created_at", { ascending: false }),
+    ]);
+    const firstError = taskResult.error || billResult.error || eventResult.error || inboxResult.error;
+    if (firstError) {
+      if (import.meta.env.DEV) console.error("Workspace load failed", firstError);
+      setError("Unable to load your workspace. Please try again.");
+    }
     else {
-      const rows = DEFAULT_BILLS.map(d => ({ ...d, user_id: userId }));
-      const { data: inserted } = await supabase.from("bills").insert(rows).select();
-      if (inserted) setBills(inserted);
+      setTasks((taskResult.data ?? []) as Task[]);
+      setBills((billResult.data ?? []) as Bill[]);
+      setEvents((eventResult.data ?? []) as CalendarEvent[]);
+      setInbox((inboxResult.data ?? []) as InboxItem[]);
     }
     setLoading(false);
-  }, [session]);
+  }, [preview, userId]);
 
-  useEffect(() => { if (session) fetchData(); }, [session, fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  /* ── Auth handlers ── */
-  const handleAuth = async () => {
-    setAuthError("");
-    if (authMode === "signup") {
-      const { error } = await supabase.auth.signUp({ email: authEmail, password: authPass });
-      if (error) setAuthError(error.message);
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPass });
-      if (error) setAuthError(error.message);
+  const runMutation = async (action: () => PromiseLike<{ error: { message: string } | null }>, onSuccess: () => void, success: string) => {
+    setSaving(true);
+    try {
+      const { error: mutationError } = await action();
+      if (mutationError) throw mutationError;
+      onSuccess();
+      showToast({ message: success });
+    } catch (caught) {
+      if (import.meta.env.DEV) console.error("Workspace change failed", caught);
+      showToast({ message: "That change could not be saved. Please try again.", error: true });
+    } finally {
+      setSaving(false);
     }
   };
 
-  /* ── Task CRUD ── */
-  const toggleDone = async (id: number) => {
-    const t = tasks.find(x => x.id === id);
-    if (!t) return;
-    const next = !t.done;
-    const completed_at = next ? new Date().toISOString() : null;
-    setTasks(prev => prev.map(x => x.id === id ? { ...x, done: next, completed_at } : x));
-    await supabase.from("tasks").update({ done: next, completed_at }).eq("id", id);
+  const addTask = async (name: string, cat: string) => {
+    if (preview) { setTasks((items) => [...items, { id: Date.now(), user_id: "preview", name, cat, done: false, priority: "medium", due: null, urgent: false }]); showToast({ message: "Task added in preview." }); return; }
+    if (!userId) return;
+    setSaving(true);
+    try {
+      const { data, error: insertError } = await supabase.from("tasks").insert({ user_id: userId, name, cat, done: false, priority: "medium", due: null, urgent: false }).select().single();
+      if (insertError) throw insertError;
+      setTasks((items) => [...items, data as Task]); showToast({ message: "Task added." });
+    } catch (caught) { if (import.meta.env.DEV) console.error("Task insert failed", caught); showToast({ message: "The task could not be added. Please try again.", error: true }); }
+    finally { setSaving(false); }
   };
 
-  const cyclePriority = async (id: number) => {
-    const t = tasks.find(x => x.id === id);
-    if (!t) return;
-    const cycle: Record<string, string> = { high: "medium", medium: "low", low: "high" };
-    const next = cycle[t.priority];
-    setTasks(prev => prev.map(x => x.id === id ? { ...x, priority: next } : x));
-    await supabase.from("tasks").update({ priority: next }).eq("id", id);
-  };
-
-  const setDue = async (id: number, due: any) => {
-    setTasks(prev => prev.map(x => x.id === id ? { ...x, due } : x));
-    await supabase.from("tasks").update({ due }).eq("id", id);
-  };
-
-  const moveTask = async (id: number, cat: string) => {
-    const pri = DEF_PRI[cat] || "medium";
-    setTasks(prev => prev.map(x => x.id === id ? { ...x, cat, priority: pri } : x));
-    await supabase.from("tasks").update({ cat, priority: pri }).eq("id", id);
-  };
-
-  const deleteTask = async (id: number) => {
-    setTasks(prev => prev.filter(x => x.id !== id));
-    await supabase.from("tasks").delete().eq("id", id);
-  };
-
-  const addTask = async () => {
-    if (!addInput.trim() || !session) return;
-    const row = { user_id: session.user.id, cat: addCat, name: addInput.trim(), done: false, priority: DEF_PRI[addCat] || "medium", due: null, urgent: false };
-    const { data } = await supabase.from("tasks").insert(row).select().single();
-    if (data) setTasks(prev => [...prev, data]);
-    setAddInput("");
-    if (FUTURE_CATS.includes(addCat)) { setPage("future"); setFutureTab(addCat); }
-    else { setPage("tasks"); setActiveTab(addCat); }
-  };
-
-  const addBillFn = async () => {
-    if (!newBill.name.trim() || !newBill.amount || !session) return;
-    const row = { user_id: session.user.id, name: newBill.name.trim(), amount: parseFloat(newBill.amount), freq: newBill.freq, day: parseInt(newBill.day) };
-    const { data } = await supabase.from("bills").insert(row).select().single();
-    if (data) setBills(prev => [...prev, data]);
-    setNewBill({ name: "", amount: "", freq: "Monthly", day: "1" }); setAddBillModal(false);
-  };
-
-  const deleteBill = async (id: number) => {
-    setBills(prev => prev.filter(x => x.id !== id));
-    await supabase.from("bills").delete().eq("id", id);
-  };
-
-  /* ── Event CRUD ── */
-  const addEventFn = async () => {
-    if (!newEvent.title.trim() || !session) return;
-    const row = { user_id: session.user.id, title: newEvent.title.trim(), date: newEvent.date || null, time: newEvent.time || null, note: newEvent.note || null };
-    const { data } = await supabase.from("events").insert(row).select().single();
-    if (data) setEvents(prev => [...prev, data]);
-    setNewEvent({ title: "", date: "", time: "", note: "" }); setAddEventModal(false);
-  };
-
-  const deleteEvent = async (id: number) => {
-    setEvents(prev => prev.filter(x => x.id !== id));
-    await supabase.from("events").delete().eq("id", id);
-  };
-
-  if (authLoading) return <div style={{ padding: 40, textAlign: "center", color: "#888", fontFamily: FONT }}>Loading...</div>;
-
-  if (!session) return (
-    <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 20px", fontFamily: FONT }}>
-      <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div style={{ fontSize: 32, fontWeight: 800, color: "#b8860b", letterSpacing: -1 }}>Townsend OS</div>
-        <div style={{ fontSize: 14, color: "#888", marginTop: 4 }}>{authMode === "signin" ? "Sign in to your account" : "Create your account"}</div>
-      </div>
-      <input value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email" type="email"
-        style={{ width: "100%", padding: "12px 14px", border: "1px solid #ddd", borderRadius: 10, fontSize: 15, marginBottom: 10, boxSizing: "border-box", fontFamily: FONT, outline: "none" }} />
-      <input value={authPass} onChange={e => setAuthPass(e.target.value)} placeholder="Password" type="password"
-        onKeyDown={e => e.key === "Enter" && handleAuth()}
-        style={{ width: "100%", padding: "12px 14px", border: "1px solid #ddd", borderRadius: 10, fontSize: 15, marginBottom: 12, boxSizing: "border-box", fontFamily: FONT, outline: "none" }} />
-      {authError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 10 }}>{authError}</div>}
-      <button onClick={handleAuth} style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: "#b8860b", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-        {authMode === "signin" ? "Sign in" : "Sign up"}
-      </button>
-      <div style={{ textAlign: "center", marginTop: 16 }}>
-        <button onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")} style={{ background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
-          {authMode === "signin" ? "Need an account? Sign up" : "Already have an account? Sign in"}
-        </button>
-      </div>
-    </div>
+  const updateTask = (task: Task, changes: Partial<Task>) => runMutation(
+    () => preview ? Promise.resolve({ error: null }) : supabase.from("tasks").update(changes).eq("id", task.id).eq("user_id", userId!).select("id").single(),
+    () => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...changes } : item)),
+    changes.done === true ? "Task completed." : changes.done === false ? "Task reopened." : "Task updated.",
   );
 
-  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#888", fontFamily: FONT }}>Loading your tasks...</div>;
+  const deleteTask = (task: Task) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("tasks").delete().eq("id", task.id).eq("user_id", userId!).select("id").single(), () => setTasks((items) => items.filter((item) => item.id !== task.id)), "Task deleted.");
 
-  const now = new Date();
-  const dateStr = now.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  const openCount = tasks.filter(t => !t.done).length;
-  const highCount = tasks.filter(t => t.priority === "high" && !t.done).length;
-  const urgentCount = tasks.filter(t => t.urgent && !t.done).length;
-  const doneCount = tasks.filter(t => t.done).length;
-
-  /* ══════════════════════════════════════════════
-     COMPONENTS
-     ══════════════════════════════════════════════ */
-
-  const TaskCard = ({ t, theme }: { t: any; theme: any }) => {
-    const dl = getDueLabel(t.due);
-    const isOverdue = dl && dl.cls === "overdue";
-    const isBold = t.priority === "high" || t.urgent || isOverdue;
-    const isItalic = t.priority === "low" && !t.urgent && !isOverdue;
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", marginBottom: 6, borderRadius: 12, border: `1px solid ${theme.border}40`, background: theme.card, opacity: t.done ? 0.4 : 1, borderLeft: `4px solid ${theme.accent}`, transition: "opacity 0.2s" }}>
-        <button onClick={() => toggleDone(t.id)} style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, cursor: "pointer", border: t.done ? "none" : `2.5px solid ${theme.accent}60`, display: "flex", alignItems: "center", justifyContent: "center", background: t.done ? "#22c55e" : "transparent" }}>
-          {t.done && <svg width="11" height="9" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg>}
-        </button>
-        <span style={{ flex: 1, fontSize: 16, lineHeight: 1.35, color: t.done ? "#aaa" : "#1a1a1a", fontWeight: isBold ? 700 : isItalic ? 400 : 500, fontStyle: isItalic ? "italic" : "normal", textDecoration: t.done ? "line-through" : "none", minWidth: 0 }}>{t.name}</span>
-        {/* Single aligned control row: fixed-width priority · date · overflow */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <div style={{ position: "relative" }}>
-            <button onClick={() => cyclePriority(t.id)} style={priStyle(t.priority)} title="Tap to change priority">{t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}</button>
-            {t.urgent && <span style={{ position: "absolute", top: -4, right: -4, width: 9, height: 9, borderRadius: "50%", background: "#ef4444", border: "1.5px solid #fff", animation: "pulse 1.5s infinite" }} />}
-          </div>
-          <button onClick={() => { setDueModal(t.id); setCustomDate(t.due?.type === "custom" ? t.due.date : ""); }} style={dueStyle(dl)} title="Set due date">{dl ? dl.text : "+ Date"}</button>
-          <button onClick={() => setActionSheet(t.id)} style={kebabStyle} title="More">⋯</button>
-        </div>
-      </div>
-    );
+  const addEvent = async (event: Omit<CalendarEvent, "id" | "user_id">) => {
+    if (preview) { setEvents((items) => [...items, { ...event, id: Date.now(), user_id: "preview" }]); showToast({ message: "Event added in preview." }); return; }
+    if (!userId) return;
+    setSaving(true);
+    try {
+      const { data, error: insertError } = await supabase.from("events").insert({ ...event, user_id: userId }).select().single();
+      if (insertError) throw insertError;
+      setEvents((items) => [...items, data as CalendarEvent]); showToast({ message: "Event added." });
+    } catch (caught) { if (import.meta.env.DEV) console.error("Event insert failed", caught); showToast({ message: "The event could not be added. Please try again.", error: true }); }
+    finally { setSaving(false); }
   };
+  const deleteEvent = (event: CalendarEvent) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("events").delete().eq("id", event.id).eq("user_id", userId!).select("id").single(), () => setEvents((items) => items.filter((item) => item.id !== event.id)), "Event deleted.");
 
-  const HeadingBlock = ({ cat }: { cat: string }) => {
-    const th = THEMES[cat];
-    const catTasks = tasks.filter(t => t.cat === cat);
-    const active = catTasks.filter(t => !t.done);
-    const high = active.filter(t => t.priority === "high" || t.urgent);
-    const rest = active.filter(t => t.priority !== "high" && !t.urgent);
-    const hc = high.length;
-    return (
-      <div style={{ margin: "0 12px 16px", borderRadius: 16, overflow: "hidden", border: `1.5px solid ${th.border}`, background: th.bg }}>
-        <div style={{ padding: "16px 16px 12px", background: `linear-gradient(135deg, ${th.bg2}, ${th.bg})` }}>
-          <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -0.8, lineHeight: 1, color: th.text }}>{cat}</div>
-          <div style={{ fontSize: 12, marginTop: 4, color: th.sub, fontWeight: 600 }}>{active.length} open{hc > 0 && ` · ${hc} high priority`}</div>
-        </div>
-        <div style={{ padding: "4px 8px 8px" }}>
-          {high.map(t => <TaskCard key={t.id} t={t} theme={th} />)}
-          {rest.map(t => <TaskCard key={t.id} t={t} theme={th} />)}
-          {!active.length && <div style={{ textAlign: "center", padding: 16, color: "#aaa", fontSize: 13 }}>No open tasks</div>}
-        </div>
-      </div>
-    );
+  const addBill = async (bill: Omit<Bill, "id" | "user_id">) => {
+    if (preview) { setBills((items) => [...items, { ...bill, id: Date.now(), user_id: "preview" }]); showToast({ message: "Bill added in preview." }); return; }
+    if (!userId) return;
+    setSaving(true);
+    try {
+      const { data, error: insertError } = await supabase.from("bills").insert({ ...bill, user_id: userId }).select().single();
+      if (insertError) throw insertError;
+      setBills((items) => [...items, data as Bill]); showToast({ message: "Bill added." });
+    } catch (caught) { if (import.meta.env.DEV) console.error("Bill insert failed", caught); showToast({ message: "The bill could not be added. Please try again.", error: true }); }
+    finally { setSaving(false); }
   };
+  const deleteBill = (bill: Bill) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("bills").delete().eq("id", bill.id).eq("user_id", userId!).select("id").single(), () => setBills((items) => items.filter((item) => item.id !== bill.id)), "Bill deleted.");
+  const archiveInbox = (item: InboxItem) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("inbox_items").update({ archived: true }).eq("id", item.id).eq("user_id", userId!).select("id").single(), () => setInbox((items) => items.map((current) => current.id === item.id ? { ...current, archived: true } : current)), "Inbox item archived.");
 
-  const BillBlock = () => {
-    const th = THEMES["Bills"];
-    return (
-      <div style={{ margin: "0 12px 16px", borderRadius: 16, overflow: "hidden", border: `1.5px solid ${th.border}`, background: th.bg }}>
-        <div style={{ padding: "16px 16px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-end", background: `linear-gradient(135deg, ${th.bg2}, ${th.bg})` }}>
-          <div>
-            <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -0.8, lineHeight: 1, color: th.text }}>Bills</div>
-            <div style={{ fontSize: 12, marginTop: 4, color: th.sub, fontWeight: 600 }}>{bills.length} tracked</div>
-          </div>
-          <button onClick={() => setAddBillModal(true)} style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${th.border}`, color: th.text, fontWeight: 700, background: "transparent", cursor: "pointer" }}>+ Add bill</button>
-        </div>
-        <div style={{ padding: "4px 8px 8px" }}>
-          {bills.map(b => {
-            const s = getBillDue(b);
-            const cls = s.cls === "due-overdue" ? { color: "#dc2626", fontWeight: 700 } : s.cls === "due-soon" ? { color: "#d97706", fontWeight: 600 } : { color: "#22c55e" };
-            return (
-              <div key={b.id} style={{ background: th.card, border: `1px solid ${th.border}50`, borderRadius: 10, padding: "10px 12px", marginBottom: 4, borderLeft: `4px solid ${th.accent}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>{b.name}</span>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: th.accent }}>${b.amount.toLocaleString()}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                  <span style={{ fontSize: 12, color: "#888" }}>{b.freq} — {b.freq === "Monthly" ? `${b.day}th of each month` : "Every Thursday"}</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, ...cls }}>{s.label}</span>
-                    <button onClick={() => deleteBill(b.id)} style={{ fontSize: 11, color: "#ccc", cursor: "pointer", background: "none", border: "none" }}>✕</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+  const heading = useMemo(() => NAV.find((item) => item.id === page)?.label ?? "Townsend OS", [page]);
 
-  const Overlay = ({ children, onClose }: { children: any; onClose: () => void }) => (
-    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: 20, width: 280, maxWidth: "90vw", boxShadow: "0 8px 30px rgba(0,0,0,0.15)", maxHeight: "80vh", overflowY: "auto" }}>{children}</div>
-    </div>
-  );
+  if (!authReady) return <div className="loading-screen"><div className="loading-state"><span className="spinner" /> Securing your workspace…</div></div>;
+  if (session && recovering) return <><PasswordRecovery onComplete={() => setRecovering(false)} onToast={showToast} />{toast && <div className={`toast${toast.error ? " error" : ""}`} role="status">{toast.message}</div>}<Analytics /></>;
+  if (!session && !preview) return <><Login onToast={showToast} />{toast && <div className={`toast${toast.error ? " error" : ""}`} role="status">{toast.message}</div>}<Analytics /></>;
 
-  /* ══════════════════════════════════════════════
-     BILLS PAGE
-     ══════════════════════════════════════════════ */
-  const BillsPage = () => {
-    const monthlyTotal = bills.reduce((sum, b) => sum + (b.freq === "Monthly" ? b.amount : b.amount * 4.333), 0);
-    return (
-      <div style={{ padding: "12px 0 80px" }}>
-        <div style={{ display: "flex", gap: 6, margin: "0 12px 12px" }}>
-          {[
-            { n: bills.length, l: "Bills tracked", c: THEMES["Bills"].accent },
-            { n: `$${Math.round(monthlyTotal).toLocaleString()}`, l: "≈ Per month", c: "#1a1a1a" },
-          ].map(s => (
-            <div key={s.l} style={{ flex: 1, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "10px 6px", textAlign: "center" }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: s.c }}>{s.n}</div>
-              <div style={{ fontSize: 9, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 1 }}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-        <BillBlock />
-      </div>
-    );
-  };
-
-  /* ══════════════════════════════════════════════
-     COMPLETED PAGE
-     ══════════════════════════════════════════════ */
-  const CompletedPage = () => {
-    const done = tasks.filter(t => t.done);
-    const groups: Record<string, any[]> = {};
-    done.forEach(t => {
-      const k = t.completed_at ? t.completed_at.slice(0, 10) : "—";
-      (groups[k] ||= []).push(t);
-    });
-    const keys = Object.keys(groups).sort((a, b) => a === "—" ? 1 : b === "—" ? -1 : b.localeCompare(a));
-    const fmtDay = (ds: string) => {
-      const d = new Date(ds + "T00:00:00");
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const yd = new Date(); yd.setDate(yd.getDate() - 1);
-      if (ds === todayStr) return "Today";
-      if (ds === yd.toISOString().slice(0, 10)) return "Yesterday";
-      return d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" });
-    };
-    return (
-      <div style={{ padding: "12px 12px 80px" }}>
-        <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "12px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 30, fontWeight: 900, color: "#22c55e" }}>{done.length}</div>
-          <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>task{done.length !== 1 ? "s" : ""} completed<br /><span style={{ fontSize: 11, color: "#999", fontWeight: 400 }}>Tap the check to restore a task</span></div>
-        </div>
-        {done.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#aaa", fontSize: 14 }}>No completed tasks yet</div>}
-        {keys.map(k => (
-          <div key={k} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#666", margin: "4px 2px 8px", textTransform: "uppercase", letterSpacing: 0.5 }}>
-              {k === "—" ? "Date unknown" : fmtDay(k)}
-            </div>
-            {groups[k].map(t => {
-              const th = THEMES[t.cat] || THEMES["Today"];
-              return (
-                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", marginBottom: 6, borderRadius: 12, border: "1px solid #e5e7eb", background: "#fff", borderLeft: `4px solid ${th.accent}` }}>
-                  <button onClick={() => toggleDone(t.id)} title="Restore task" style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, cursor: "pointer", border: "none", display: "flex", alignItems: "center", justifyContent: "center", background: "#22c55e" }}>
-                    <svg width="11" height="9" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
-                  </button>
-                  <span style={{ flex: 1, fontSize: 15, color: "#9ca3af", textDecoration: "line-through", minWidth: 0 }}>{t.name}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6, background: th.bg2, color: th.text, whiteSpace: "nowrap", flexShrink: 0 }}>{t.cat}</span>
-                  <button onClick={() => setDeleteConfirm(t.id)} style={kebabStyle} title="Delete permanently">✕</button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  /* ══════════════════════════════════════════════
-     INBOX PAGE
-     ══════════════════════════════════════════════ */
-  const InboxPage = () => {
-    const urgentMessages = INBOX_MESSAGES.filter(m => m.priority === 1);
-    const personalMessages = INBOX_MESSAGES.filter(m => m.priority === 2);
-    const noActionMessages = INBOX_MESSAGES.filter(m => m.priority === 3);
-    const urgentEmails = INBOX_EMAILS.filter(e => e.priority === 1);
-    const reviewEmails = INBOX_EMAILS.filter(e => e.priority === 2);
-    const noActionEmails = INBOX_EMAILS.filter(e => e.priority === 3);
-
-    const InboxCard = ({ item, showSubject }: { item: any; showSubject?: boolean }) => (
-      <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderLeft: `4px solid ${item.platformColor || "#b8860b"}`, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const, marginBottom: 4 }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{item.sender}</span>
-              {item.platform && (
-                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: item.platformBg, color: item.platformColor }}>
-                  {item.platform}
-                </span>
-              )}
-            </div>
-            {showSubject && item.subject && (
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{item.subject}</div>
-            )}
-            <div style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>{item.content}</div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
-            <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", whiteSpace: "nowrap" as const }}>{item.age}</span>
-            <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: item.flagBg, color: item.flagColor, whiteSpace: "nowrap" as const }}>{item.flag}</span>
-          </div>
-        </div>
-      </div>
-    );
-
-    const SectionLabel = ({ text, urgent }: { text: string; urgent?: boolean }) => (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 10px" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: 1.5, color: urgent ? "#dc2626" : "#9ca3af", whiteSpace: "nowrap" as const }}>{text}</span>
-        <div style={{ flex: 1, height: 1, background: "#e5e7eb" }} />
-      </div>
-    );
-
-    return (
-      <div style={{ padding: "12px 12px 80px" }}>
-        {/* Stats */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-          {[
-            { n: INBOX_MESSAGES.filter(m => m.priority === 1).length, l: "Reply owed", c: "#dc2626" },
-            { n: INBOX_MESSAGES.length, l: "Messages", c: "#b8860b" },
-            { n: INBOX_EMAILS.filter(e => e.priority === 1).length, l: "Urgent email", c: "#dc2626" },
-            { n: INBOX_EMAILS.length, l: "Emails", c: "#6b7280" },
-          ].map(s => (
-            <div key={s.l} style={{ flex: 1, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "10px 6px", textAlign: "center" }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: s.c }}>{s.n}</div>
-              <div style={{ fontSize: 9, color: "#999", textTransform: "uppercase" as const, letterSpacing: 0.5, marginTop: 1 }}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Do first strip */}
-        <div style={{ background: "#1c1a16", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" as const, color: "#e8c14a", marginBottom: 10 }}>Do these first</div>
-          {[
-            "Brad Hunter (LinkedIn) — live Property Counsel role, call pending",
-            "Lyndsey Warren, Peter Dallimer, Marianna Tuccia — 3 recruiters, one template reply clears all",
-            "Strata AGM email — committee response needed for 10 Sep date",
-            "ChatGPT (28 Jun) & Tinder (27 Jun) — decide keep or cancel this week",
-            "Instagram security cluster — verify it was all you setting up Beeper",
-          ].map((item, i) => (
-            <div key={i} style={{ display: "flex", gap: 12, padding: "8px 0", borderTop: i > 0 ? "1px solid #34302a" : "none", fontSize: 13, color: "#c9c0af", lineHeight: 1.4 }}>
-              <span style={{ fontFamily: "monospace", fontSize: 11, color: "#6b6457", fontWeight: 700, flexShrink: 0, paddingTop: 1 }}>0{i + 1}</span>
-              <span>{item}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Sub-tabs */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 4, borderBottom: "1px solid #e5e7eb" }}>
-          {(["messages", "email"] as const).map(t => (
-            <button key={t} onClick={() => setInboxTab(t)} style={{
-              flex: 1, padding: "8px 0", fontSize: 13, fontWeight: inboxTab === t ? 700 : 500, cursor: "pointer", fontFamily: FONT,
-              border: "none", borderBottom: inboxTab === t ? "3px solid #b8860b" : "3px solid transparent",
-              background: "transparent", color: inboxTab === t ? "#b8860b" : "#999",
-            }}>
-              {t === "messages" ? `Messages (${INBOX_MESSAGES.length})` : `Email (${INBOX_EMAILS.length})`}
-            </button>
-          ))}
-        </div>
-
-        {inboxTab === "messages" && (
-          <div>
-            <SectionLabel text="Reply owed · Job hunt" urgent />
-            {urgentMessages.map(m => <InboxCard key={m.id} item={m} />)}
-            <SectionLabel text="Reply owed · Personal" />
-            {personalMessages.map(m => <InboxCard key={m.id} item={m} />)}
-            <SectionLabel text="No action needed" />
-            {noActionMessages.map(m => <InboxCard key={m.id} item={m} />)}
-          </div>
-        )}
-
-        {inboxTab === "email" && (
-          <div>
-            <SectionLabel text="Needs attention" urgent />
-            {urgentEmails.map(e => <InboxCard key={e.id} item={e} showSubject />)}
-            <SectionLabel text="Worth a look" />
-            {reviewEmails.map(e => <InboxCard key={e.id} item={e} showSubject />)}
-            <SectionLabel text="No action · receipts & noise" />
-            {noActionEmails.map(e => <InboxCard key={e.id} item={e} showSubject />)}
-          </div>
-        )}
-
-        <div style={{ marginTop: 24, fontSize: 11, color: "#c4b89a", fontFamily: "monospace", textAlign: "center" as const, lineHeight: 1.6 }}>
-          Snapshot · {dateStr}<br />
-          Say "triage my inbox" in Claude to refresh
-        </div>
-      </div>
-    );
-  };
-
-  /* ══════════════════════════════════════════════
-     CALENDAR PAGE
-     ══════════════════════════════════════════════ */
-  const EventCard = ({ ev }: { ev: any }) => {
-    const eth = THEMES["Events"];
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", marginBottom: 6, borderRadius: 12, border: `1px solid ${eth.border}50`, background: eth.card, borderLeft: `4px solid ${eth.accent}` }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{ev.title}</div>
-          {(ev.time || ev.note) && (
-            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{[ev.time, ev.note].filter(Boolean).join(" · ")}</div>
-          )}
-        </div>
-        <button onClick={() => setDeleteEventConfirm(ev.id)} style={kebabStyle} title="Delete event">✕</button>
-      </div>
-    );
-  };
-
-  const CalendarPage = () => {
-    const isEvents = calTab === "events";
-    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-    const firstDay = new Date(calYear, calMonth, 1).getDay();
-    const monthName = new Date(calYear, calMonth).toLocaleDateString("en-AU", { month: "long", year: "numeric" });
-
-    // Date → items map, depending on active sub-tab.
-    const dateMap: Record<string, any[]> = {};
-    if (isEvents) {
-      events.forEach(ev => { if (ev.date) (dateMap[ev.date] ||= []).push(ev); });
-    } else {
-      tasks.filter(t => !t.done).forEach(t => { const d = getTaskDate(t.due); if (d) (dateMap[d] ||= []).push(t); });
-    }
-
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const cells: any[] = [];
-    for (let i = 0; i < firstDay; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      cells.push({ day: d, date: ds, items: dateMap[ds] || [] });
-    }
-    const prevMonth = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(calYear - 1); } else setCalMonth(calMonth - 1); };
-    const nextMonth = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(calYear + 1); } else setCalMonth(calMonth + 1); };
-    const selItems = selectedDate ? (dateMap[selectedDate] || []) : [];
-    const accent = isEvents ? THEMES["Events"].accent : "#b8860b";
-
-    return (
-      <div style={{ padding: "12px 12px 0" }}>
-        {/* Sub-tabs: Events / Due Dates */}
-        <div style={{ display: "flex", marginBottom: 14, borderBottom: "1px solid #e5e7eb" }}>
-          {([["due", `Task Due Dates`], ["events", `Events`]] as const).map(([k, label]) => (
-            <button key={k} onClick={() => { setCalTab(k); setSelectedDate(null); }} style={{
-              flex: 1, padding: "8px 0", fontSize: 13, fontWeight: calTab === k ? 700 : 500, cursor: "pointer", fontFamily: FONT,
-              border: "none", borderBottom: calTab === k ? `3px solid ${accent}` : "3px solid transparent",
-              background: "transparent", color: calTab === k ? accent : "#999",
-            }}>{label}</button>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <button onClick={prevMonth} style={{ fontSize: 20, background: "none", border: "none", cursor: "pointer", color: "#666", padding: "4px 10px" }}>‹</button>
-          <span style={{ fontSize: 20, fontWeight: 700, color: "#1a1a1a" }}>{monthName}</span>
-          <button onClick={nextMonth} style={{ fontSize: 20, background: "none", border: "none", cursor: "pointer", color: "#666", padding: "4px 10px" }}>›</button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
-            <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 600, color: "#999", padding: 4 }}>{d}</div>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
-          {cells.map((cell, i) => {
-            if (!cell) return <div key={`empty-${i}`} />;
-            const isToday = cell.date === todayStr;
-            const isSelected = cell.date === selectedDate;
-            const dots: string[] = isEvents ? (cell.items.length ? ["Events"] : []) : ([...new Set(cell.items.map((t: any) => t.cat))] as string[]);
-            return (
-              <button key={cell.date} onClick={() => setSelectedDate(isSelected ? null : cell.date)}
-                style={{ padding: "6px 2px 8px", borderRadius: 10, border: isSelected ? `2px solid ${accent}` : isToday ? "2px solid #2563eb" : "1px solid #eee", background: isSelected ? "#fff9e6" : isToday ? "#eff6ff" : "#fff", cursor: "pointer", textAlign: "center", minHeight: 48 }}>
-                <div style={{ fontSize: 14, fontWeight: isToday ? 800 : 500, color: isToday ? "#2563eb" : "#1a1a1a" }}>{cell.day}</div>
-                {cell.items.length > 0 && (
-                  <div style={{ display: "flex", gap: 2, justifyContent: "center", marginTop: 3, flexWrap: "wrap" }}>
-                    {dots.slice(0, 3).map((c: string) => (
-                      <div key={c} style={{ width: 6, height: 6, borderRadius: "50%", background: THEMES[c]?.accent || "#888" }} />
-                    ))}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {selectedDate && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 8 }}>
-              {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#888", marginLeft: 8 }}>{selItems.length} {isEvents ? "event" : "task"}{selItems.length !== 1 ? "s" : ""}</span>
-            </div>
-            {selItems.length === 0 && <div style={{ color: "#aaa", fontSize: 14, padding: "12px 0" }}>Nothing scheduled for this date</div>}
-            {isEvents
-              ? selItems.map((ev: any) => <EventCard key={ev.id} ev={ev} />)
-              : selItems.map((t: any) => { const th = THEMES[t.cat] || THEMES["Today"]; return <TaskCard key={t.id} t={t} theme={th} />; })}
-          </div>
-        )}
-
-        {/* ── EVENTS sub-tab: add + upcoming events ── */}
-        {isEvents ? (
-          <div style={{ marginTop: 24, paddingBottom: 80 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Upcoming events</div>
-              <button onClick={() => { setNewEvent({ title: "", date: selectedDate || "", time: "", note: "" }); setAddEventModal(true); }} style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${THEMES["Events"].border}`, color: THEMES["Events"].text, fontWeight: 700, background: "transparent", cursor: "pointer" }}>+ Add event</button>
-            </div>
-            {(() => {
-              const upcoming = events.filter(e => e.date && e.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date));
-              const undated = events.filter(e => !e.date);
-              if (!upcoming.length && !undated.length) return <div style={{ color: "#aaa", fontSize: 14 }}>No events yet — add one above</div>;
-              let lastDate = "";
-              return (
-                <>
-                  {upcoming.map(ev => {
-                    const showDate = ev.date !== lastDate; lastDate = ev.date;
-                    return (
-                      <div key={ev.id}>
-                        {showDate && <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginTop: 10, marginBottom: 4 }}>{new Date(ev.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}</div>}
-                        <EventCard ev={ev} />
-                      </div>
-                    );
-                  })}
-                  {undated.length > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginTop: 10, marginBottom: 4 }}>No date</div>}
-                  {undated.map(ev => <EventCard key={ev.id} ev={ev} />)}
-                </>
-              );
-            })()}
-          </div>
-        ) : (
-          /* ── DUE DATES sub-tab: upcoming dated tasks ── */
-          <div style={{ marginTop: 24, paddingBottom: 80 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a", marginBottom: 10 }}>Upcoming due dates</div>
-            {(() => {
-              const upcoming = tasks.filter(t => !t.done && getTaskDate(t.due)).map(t => ({ ...t, _date: getTaskDate(t.due)! })).filter(t => t._date >= todayStr).sort((a, b) => a._date.localeCompare(b._date)).slice(0, 15);
-              if (!upcoming.length) return <div style={{ color: "#aaa", fontSize: 14 }}>No upcoming dated tasks</div>;
-              let lastDate = "";
-              return upcoming.map(t => {
-                const th = THEMES[t.cat] || THEMES["Today"];
-                const showDate = t._date !== lastDate;
-                lastDate = t._date;
-                return (
-                  <div key={t.id}>
-                    {showDate && <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginTop: 10, marginBottom: 4 }}>{new Date(t._date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}</div>}
-                    <TaskCard t={t} theme={th} />
-                  </div>
-                );
-              });
-            })()}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  /* ══════════════════════════════════════════════
-     RENDER
-     ══════════════════════════════════════════════ */
   return (
-    <div style={{ maxWidth: 520, margin: "0 auto", paddingBottom: 80, background: "#f0f0f0", minHeight: "100vh", fontFamily: FONT }}>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-
-      {/* Header */}
-      <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#f0f0f0", borderBottom: "1px solid #ddd", padding: "14px 12px 0" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: -0.5, color: "#b8860b" }}>Townsend OS</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, color: "#999" }}>{dateStr}</span>
-            <button onClick={() => supabase.auth.signOut()} style={{ fontSize: 10, color: "#999", background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Logout</button>
-          </div>
-        </div>
-
-        {/* Page nav — two rows: primary (active work) + secondary (reference) */}
-        {([
-          [["tasks", "Tasks"], ["calendar", "Calendar"], ["inbox", "Inbox"]],
-          [["future", "Future Items"], ["bills", "Bills"], ["completed", "Completed"]],
-        ] as const).map((row, ri) => (
-          <div key={ri} style={{ display: "flex", gap: 0, marginBottom: ri === 0 ? 2 : 8 }}>
-            {row.map(([p, label]) => (
-              <button key={p} onClick={() => { setPage(p as any); window.scrollTo({ top: 0, behavior: "smooth" }); }} style={{
-                flex: 1, padding: ri === 0 ? "8px 0" : "6px 0", fontSize: ri === 0 ? 13 : 12, fontWeight: page === p ? 700 : 500, cursor: "pointer", fontFamily: FONT,
-                border: "none", borderBottom: page === p ? "3px solid #b8860b" : "3px solid transparent",
-                background: "transparent", color: page === p ? "#b8860b" : "#999", whiteSpace: "nowrap",
-              }}>{label}</button>
-            ))}
-          </div>
-        ))}
-
-        {/* Category tabs — Tasks page */}
-        {page === "tasks" && (
-          <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 10 }}>
-            {["All", ...CORE_CATS].map(t => {
-              const th = THEMES[t] || { accent: "#b8860b" };
-              const isActive = activeTab === t;
-              return (
-                <button key={t} onClick={() => { setActiveTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  style={{ flexShrink: 0, fontSize: 11, padding: "5px 10px", borderRadius: 16, whiteSpace: "nowrap", cursor: "pointer", fontWeight: isActive ? 700 : 400, fontFamily: FONT, border: `1px solid ${isActive ? th.accent : "#ddd"}`, background: isActive ? th.accent : "transparent", color: isActive ? "#fff" : "#888" }}>{t}</button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Category tabs — Future Items page */}
-        {page === "future" && (
-          <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 10 }}>
-            {["All", ...FUTURE_CATS].map(t => {
-              const th = THEMES[t] || { accent: "#b8860b" };
-              const isActive = futureTab === t;
-              return (
-                <button key={t} onClick={() => { setFutureTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  style={{ flexShrink: 0, fontSize: 11, padding: "5px 10px", borderRadius: 16, whiteSpace: "nowrap", cursor: "pointer", fontWeight: isActive ? 700 : 400, fontFamily: FONT, border: `1px solid ${isActive ? th.accent : "#ddd"}`, background: isActive ? th.accent : "transparent", color: isActive ? "#fff" : "#888" }}>{t}</button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Summary — Tasks "All" view only */}
-      {page === "tasks" && activeTab === "All" && (
-        <div style={{ display: "flex", gap: 6, margin: "12px 12px 8px" }}>
-          {[{ n: openCount, l: "Open", c: "#b8860b", go: null }, { n: highCount, l: "High", c: "#dc2626", go: null }, { n: urgentCount, l: "Urgent", c: "#ef4444", go: null }, { n: doneCount, l: "Done", c: "#22c55e", go: "completed" as const }].map(s => (
-            <div key={s.l} onClick={() => s.go && setPage(s.go)} style={{ flex: 1, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "10px 6px", textAlign: "center", cursor: s.go ? "pointer" : "default" }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: s.c }}>{s.n}</div>
-              <div style={{ fontSize: 9, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 1 }}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Content */}
-      {page === "tasks" ? (
-        <div style={{ marginTop: 8 }}>
-          {activeTab === "All" ? CORE_CATS.map(c => <HeadingBlock key={c} cat={c} />) : <HeadingBlock cat={activeTab} />}
-        </div>
-      ) : page === "future" ? (
-        <div style={{ marginTop: 8 }}>
-          {futureTab === "All" ? FUTURE_CATS.map(c => <HeadingBlock key={c} cat={c} />) : <HeadingBlock cat={futureTab} />}
-        </div>
-      ) : page === "calendar" ? (
-        <CalendarPage />
-      ) : page === "bills" ? (
-        <BillsPage />
-      ) : page === "completed" ? (
-        <CompletedPage />
-      ) : (
-        <InboxPage />
-      )}
-
-      {/* Add bar — Tasks & Future Items pages */}
-      {(page === "tasks" || page === "future") && (
-        <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 520, padding: "8px 12px", background: "#f0f0f0", borderTop: "1px solid #ddd", zIndex: 50 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input value={addInput} onChange={e => setAddInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addTask()}
-              placeholder="Add task..." style={{ flex: 1, background: "#fff", border: "1px solid #ddd", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#1a1a1a", outline: "none", fontFamily: FONT }} />
-            <select value={addCat} onChange={e => setAddCat(e.target.value)} style={{ background: "#fff", border: "1px solid #ddd", borderRadius: 10, padding: "8px 6px", fontSize: 11, color: "#666", maxWidth: 95, fontFamily: FONT }}>
-              {TASK_CATS.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <button onClick={addTask} style={{ background: "#b8860b", border: "none", borderRadius: 10, padding: "10px 14px", fontSize: 18, fontWeight: 700, color: "#fff", cursor: "pointer" }}>+</button>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
-      {dueModal !== null && (
-        <Overlay onClose={() => setDueModal(null)}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{tasks.find(t => t.id === dueModal)?.name || "Set due date"}</h3>
-          {[["today", "Due today"], ["tomorrow", "Due tomorrow"], ["week", "Due this week"], ["month", "Due this month"]].map(([k, label]) => (
-            <button key={k} onClick={() => { setDue(dueModal, { type: k }); setDueModal(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", marginBottom: 4, borderRadius: 8, border: "1px solid #e5e7eb", background: "transparent", fontSize: 14, cursor: "pointer", fontFamily: FONT }}>{label}</button>
-          ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} style={{ flex: 1, background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: FONT }} />
-            <button onClick={() => { if (customDate) { setDue(dueModal, { type: "custom", date: customDate }); setDueModal(null); } }} style={{ background: "#2563eb", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Set</button>
-          </div>
-          <button onClick={() => { setDue(dueModal, null); setDueModal(null); }} style={{ display: "block", width: "100%", textAlign: "center", padding: 8, marginTop: 8, border: "none", background: "transparent", color: "#dc2626", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Clear date</button>
-          <button onClick={() => setDueModal(null)} style={{ display: "block", width: "100%", textAlign: "center", padding: 6, border: "none", background: "transparent", color: "#999", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-        </Overlay>
-      )}
-
-      {moveModal !== null && (
-        <Overlay onClose={() => setMoveModal(null)}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Move: {tasks.find(t => t.id === moveModal)?.name}</h3>
-          {TASK_CATS.filter(c => c !== tasks.find(t => t.id === moveModal)?.cat).map(c => (
-            <button key={c} onClick={() => { moveTask(moveModal, c); setMoveModal(null); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", marginBottom: 4, borderRadius: 8, border: "1px solid #e5e7eb", borderLeft: `4px solid ${THEMES[c].accent}`, background: "transparent", fontSize: 14, cursor: "pointer", fontFamily: FONT }}>{c}</button>
-          ))}
-          <button onClick={() => setMoveModal(null)} style={{ display: "block", width: "100%", textAlign: "center", padding: 8, marginTop: 4, border: "none", background: "transparent", color: "#999", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-        </Overlay>
-      )}
-
-      {deleteConfirm !== null && (
-        <Overlay onClose={() => setDeleteConfirm(null)}>
-          <div style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Delete task?</p>
-            <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{tasks.find(t => t.id === deleteConfirm)?.name}</p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid #ddd", background: "transparent", fontSize: 14, color: "#666", cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-              <button onClick={() => { deleteTask(deleteConfirm); setDeleteConfirm(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#ef4444", fontSize: 14, color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>Delete</button>
-            </div>
-          </div>
-        </Overlay>
-      )}
-
-      {addBillModal && (
-        <Overlay onClose={() => setAddBillModal(false)}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Add bill</h3>
-          <input value={newBill.name} onChange={e => setNewBill({ ...newBill, name: e.target.value })} placeholder="Bill name" style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 8, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          <input value={newBill.amount} onChange={e => setNewBill({ ...newBill, amount: e.target.value })} placeholder="Amount ($)" type="number" style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 8, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          <select value={newBill.freq} onChange={e => setNewBill({ ...newBill, freq: e.target.value })} style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 8, fontFamily: FONT }}>
-            <option value="Monthly">Monthly</option><option value="Weekly">Weekly</option>
-          </select>
-          <input value={newBill.day} onChange={e => setNewBill({ ...newBill, day: e.target.value })} placeholder={newBill.freq === "Monthly" ? "Day of month (1-31)" : "Day of week (0=Sun, 4=Thu)"} type="number" style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setAddBillModal(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid #ddd", background: "transparent", fontSize: 14, color: "#666", cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-            <button onClick={addBillFn} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#b8860b", fontSize: 14, color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>Add</button>
-          </div>
-        </Overlay>
-      )}
-
-      {/* Task action sheet (kebab → Move / Delete) */}
-      {actionSheet !== null && (
-        <Overlay onClose={() => setActionSheet(null)}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{tasks.find(t => t.id === actionSheet)?.name}</h3>
-          <button onClick={() => { setMoveModal(actionSheet); setActionSheet(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "12px", marginBottom: 6, borderRadius: 10, border: "1px solid #e5e7eb", background: "transparent", fontSize: 14, cursor: "pointer", fontFamily: FONT }}><span style={{ fontSize: 16 }}>↗</span> Change category</button>
-          <button onClick={() => { setDeleteConfirm(actionSheet); setActionSheet(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "12px", marginBottom: 6, borderRadius: 10, border: "1px solid #fecaca", background: "transparent", fontSize: 14, color: "#dc2626", cursor: "pointer", fontFamily: FONT }}><span style={{ fontSize: 16 }}>✕</span> Delete task</button>
-          <button onClick={() => setActionSheet(null)} style={{ display: "block", width: "100%", textAlign: "center", padding: 8, border: "none", background: "transparent", color: "#999", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-        </Overlay>
-      )}
-
-      {/* Add event */}
-      {addEventModal && (
-        <Overlay onClose={() => setAddEventModal(false)}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Add event</h3>
-          <input value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="Event title" style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 8, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <input type="date" value={newEvent.date} onChange={e => setNewEvent({ ...newEvent, date: e.target.value })} style={{ flex: 1, background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 13, boxSizing: "border-box" as const, fontFamily: FONT }} />
-            <input type="time" value={newEvent.time} onChange={e => setNewEvent({ ...newEvent, time: e.target.value })} style={{ width: 110, background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 13, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          </div>
-          <input value={newEvent.note} onChange={e => setNewEvent({ ...newEvent, note: e.target.value })} placeholder="Note (optional)" style={{ width: "100%", background: "#f9f9f9", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" as const, fontFamily: FONT }} />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setAddEventModal(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid #ddd", background: "transparent", fontSize: 14, color: "#666", cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-            <button onClick={addEventFn} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: THEMES["Events"].accent, fontSize: 14, color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>Add</button>
-          </div>
-        </Overlay>
-      )}
-
-      {/* Delete event confirm */}
-      {deleteEventConfirm !== null && (
-        <Overlay onClose={() => setDeleteEventConfirm(null)}>
-          <div style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Delete event?</p>
-            <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{events.find(e => e.id === deleteEventConfirm)?.title}</p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setDeleteEventConfirm(null)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid #ddd", background: "transparent", fontSize: 14, color: "#666", cursor: "pointer", fontFamily: FONT }}>Cancel</button>
-              <button onClick={() => { deleteEvent(deleteEventConfirm); setDeleteEventConfirm(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#ef4444", fontSize: 14, color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>Delete</button>
-            </div>
-          </div>
-        </Overlay>
-      )}
+    <div className="app-shell">
+      <header className="app-header"><div className="header-inner"><img className="brand-mark" src="/mark.svg" alt="" /><div className="brand-copy"><strong>Townsend OS</strong><span>{heading.toUpperCase()} · {preview ? "LOCAL PREVIEW" : "PRIVATE WORKSPACE"}</span></div><nav className="desktop-nav" aria-label="Primary navigation">{NAV.map((item) => <button key={item.id} className={`nav-button${page === item.id ? " active" : ""}`} onClick={() => setPage(item.id)}>{item.label}</button>)}</nav><button className="icon-button" onClick={() => preview ? window.location.assign("/") : supabase.auth.signOut()} aria-label={preview ? "Exit preview" : "Sign out"}><Icon name="log-out" /></button></div></header>
+      {error && <div className="content"><div className="page-error" role="alert">Could not load your workspace: {error} <button className="text-button" onClick={fetchData}>Try again</button></div></div>}
+      {loading ? <div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading your workspace…</div></div> : <>
+        {page === "tasks" && <TasksPage tasks={tasks} saving={saving} onAdd={addTask} onToggle={(task) => updateTask(task, { done: !task.done, completed_at: task.done ? null : new Date().toISOString() })} onUpdate={updateTask} onDelete={deleteTask} />}
+        {page === "calendar" && <CalendarPage tasks={tasks} events={events} saving={saving} onAdd={addEvent} onDelete={deleteEvent} />}
+        {page === "inbox" && <InboxPage items={inbox} saving={saving} onArchive={archiveInbox} />}
+        {page === "bills" && <BillsPage bills={bills} saving={saving} onAdd={addBill} onDelete={deleteBill} />}
+      </>}
+      <nav className="bottom-nav" aria-label="Primary navigation">{NAV.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)} aria-current={page === item.id ? "page" : undefined}><Icon name={item.icon} size={20} /><span>{item.label}</span></button>)}</nav>
+      {toast && <div className={`toast${toast.error ? " error" : ""}`} role="status"><Icon name={toast.error ? "alert-triangle" : "check"} />{toast.message}</div>}
+      <Analytics />
     </div>
   );
 }
