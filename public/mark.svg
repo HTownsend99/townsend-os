@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Towns &amp; Standard">
+  <rect width="64" height="64" rx="14" fill="#102A3C"/>
+  <rect x="6" y="6" width="52" height="52" rx="10" fill="none" stroke="#1E8A6E" stroke-width="1" opacity=".55"/>
+  <text x="32" y="33" text-anchor="middle" dominant-baseline="central" font-family="Newsreader, Georgia, serif" font-size="40" fill="#ECF7F2">&amp;</text>
+</svg>
