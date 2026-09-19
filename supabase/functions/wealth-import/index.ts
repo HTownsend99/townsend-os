@@ -6,6 +6,48 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
+const MAX_EXPANDED_BYTES = 80 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 200;
+const MAX_SHEETS = 12;
+const MAX_ROWS_PER_SHEET = 50_000;
+const MAX_COLUMNS_PER_SHEET = 100;
+const MAX_CELLS_PER_WORKBOOK = 1_000_000;
+
+function validateZipEnvelope(bytes: Uint8Array) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let entries = 0;
+  let expandedBytes = 0;
+  for (let offset = 0; offset + 46 <= bytes.byteLength; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue;
+    entries += 1;
+    const compressed = view.getUint32(offset + 20, true);
+    const expanded = view.getUint32(offset + 24, true);
+    expandedBytes += expanded;
+    if (entries > MAX_ZIP_ENTRIES || expandedBytes > MAX_EXPANDED_BYTES || (compressed > 0 && expanded / compressed > 200)) {
+      throw new Error("The workbook expands beyond the safe import limit");
+    }
+    offset += 45 + view.getUint16(offset + 28, true) + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
+  }
+  if (!entries) throw new Error("The file is not a valid XLSX workbook");
+}
+
+function validateWorkbookShape(workbook: XLSX.WorkBook) {
+  if (workbook.SheetNames.length > MAX_SHEETS) throw new Error(`The workbook has more than ${MAX_SHEETS} sheets`);
+  let totalCells = 0;
+  for (const sheetName of workbook.SheetNames) {
+    const ref = workbook.Sheets[sheetName]?.["!ref"];
+    if (!ref) continue;
+    const range = XLSX.utils.decode_range(ref);
+    const rows = range.e.r - range.s.r + 1;
+    const columns = range.e.c - range.s.c + 1;
+    totalCells += rows * columns;
+    if (rows > MAX_ROWS_PER_SHEET || columns > MAX_COLUMNS_PER_SHEET || totalCells > MAX_CELLS_PER_WORKBOOK) {
+      throw new Error("The workbook contains too many rows or cells to import safely");
+    }
+  }
+}
+
 type JsonRow = Record<string, unknown>;
 type ImportError = { sheet: string; row: number; message: string };
 
@@ -83,10 +125,12 @@ function markDuplicateCandidates(records: JsonRow[]) {
   const candidates = new Set<JsonRow>();
   for (const group of groups.values()) {
     group.sort((a, b) => String(a.transaction_date).localeCompare(String(b.transaction_date)));
-    for (let left = 0; left < group.length; left++) for (let right = left + 1; right < group.length; right++) {
-      const delta = Math.abs(Date.parse(String(group[right].transaction_date)) - Date.parse(String(group[left].transaction_date)));
-      if (delta > 2 * 86400000) break;
-      candidates.add(group[left]); candidates.add(group[right]);
+    for (let index = 1; index < group.length; index++) {
+      const delta = Date.parse(String(group[index].transaction_date)) - Date.parse(String(group[index - 1].transaction_date));
+      if (delta <= 2 * 86400000) {
+        candidates.add(group[index - 1]);
+        candidates.add(group[index]);
+      }
     }
   }
   for (const row of candidates) { row.is_duplicate_candidate = true; row.review_status = "pending"; }
@@ -147,9 +191,12 @@ Deno.serve(async (request) => {
     const file = form.get("file");
     strategy = normal(form.get("dedup_strategy")) === "replace" ? "replace" : "append";
     if (!(file instanceof File) || !/\.xlsx$/i.test(file.name)) return Response.json({ error: "Choose an XLSX workbook" }, { status: 400, headers: corsHeaders });
-    if (file.size > 20 * 1024 * 1024) return Response.json({ error: "The workbook exceeds the 20 MB import limit" }, { status: 413, headers: corsHeaders });
+    if (file.size > MAX_COMPRESSED_BYTES) return Response.json({ error: "The workbook exceeds the 10 MB import limit" }, { status: 413, headers: corsHeaders });
     filename = file.name;
-    workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array", cellDates: true });
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    validateZipEnvelope(bytes);
+    workbook = XLSX.read(bytes, { type: "array", cellDates: true });
+    validateWorkbookShape(workbook);
   } catch (error) {
     return Response.json({ error: `Could not read workbook: ${error instanceof Error ? error.message : "unknown error"}` }, { status: 400, headers: corsHeaders });
   }

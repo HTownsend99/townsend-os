@@ -6,3 +6,28 @@ verify_jwt = true
 
 [functions.calendar-sync]
 verify_jwt = true
+
+[auth]
+additional_redirect_urls = ["https://townsend-os.com/**"]
+enable_signup = false
+site_url = "https://townsend-os.com"
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[db.pooler]
+default_pool_size = 15
+max_client_conn = 200
+
+[storage.analytics]
+enabled = true
+max_namespaces = 10
+
+[storage.image_transformation]
+enabled = true

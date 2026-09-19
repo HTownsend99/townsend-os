@@ -104,6 +104,19 @@ type IcalEvent = {
   recurrences?: Record<string, IcalEvent>;
 };
 
+function validateRecurrenceRules(feed: string) {
+  for (const unfolded of feed.replace(/\r?\n[ \t]/g, "").match(/^RRULE:.*$/gim) || []) {
+    const rule = unfolded.slice(unfolded.indexOf(":") + 1).toUpperCase();
+    if (/FREQ=(SECONDLY|MINUTELY|HOURLY)(?:;|$)/.test(rule)) {
+      throw new Error("Sub-daily calendar recurrences are not supported.");
+    }
+    const count = Number(rule.match(/(?:^|;)COUNT=(\d+)(?:;|$)/)?.[1] || 0);
+    if (count > MAX_EVENTS || /(?:^|;)(BYSECOND|BYMINUTE|BYHOUR)=/.test(rule)) {
+      throw new Error("A calendar recurrence expands beyond the safe sync limit.");
+    }
+  }
+}
+
 function occurrenceRow(event: IcalEvent, occurrenceStart: Date, userId: string, calendarName: string) {
   const baseStart = event.start as Date;
   const baseEnd = event.end instanceof Date ? event.end : new Date(baseStart.getTime() + 60 * 60 * 1000);
@@ -129,6 +142,7 @@ function occurrenceRow(event: IcalEvent, occurrenceStart: Date, userId: string, 
 }
 
 function parseEvents(feed: string, userId: string, calendarName: string) {
+  validateRecurrenceRules(feed);
   const parsed = ical.sync.parseICS(feed) as Record<string, IcalEvent>;
   const now = new Date();
   const windowStart = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1));
