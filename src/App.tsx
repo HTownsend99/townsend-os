@@ -486,6 +486,7 @@ export default function App() {
   const [events, setEvents] = useState<CalendarEvent[]>(preview ? PREVIEW_EVENTS : []);
   const [calendarSync, setCalendarSync] = useState<CalendarSyncSettings | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
+  const syncBusyRef = useRef(false);
   const [inbox, setInbox] = useState<InboxItem[]>(preview ? PREVIEW_INBOX : []);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<Toast>(null);
@@ -594,7 +595,8 @@ export default function App() {
   const deleteEvent = (event: CalendarEvent) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("events").delete().eq("id", event.id).eq("user_id", userId!).select("id").single(), () => setEvents((items) => items.filter((item) => item.id !== event.id)), "Event deleted.");
 
   const syncCalendar = useCallback(async (notify = true) => {
-    if (preview || !userId || syncBusy) return;
+    if (preview || !userId || syncBusyRef.current) return;
+    syncBusyRef.current = true;
     setSyncBusy(true);
     try {
       const { data, error: syncError } = await supabase.functions.invoke("calendar-sync", { body: { action: "sync" } });
@@ -607,9 +609,10 @@ export default function App() {
       if (notify) showToast({ message: "Calendar sync failed. Check the private iCalendar address and try again.", error: true });
       await fetchData();
     } finally {
+      syncBusyRef.current = false;
       setSyncBusy(false);
     }
-  }, [fetchData, preview, showToast, syncBusy, userId]);
+  }, [fetchData, preview, showToast, userId]);
 
   const configureCalendarSync = async (feedUrl: string, calendarName: string) => {
     if (preview) { setCalendarSync({ calendar_name: calendarName, enabled: true, last_synced_at: new Date().toISOString(), last_sync_status: "success", last_sync_error: null }); return true; }
@@ -634,12 +637,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (page !== "calendar" || preview || !calendarSync?.enabled) return;
+    if (page !== "calendar" || preview || !calendarSync?.enabled || calendarSync.last_sync_status === "error") return;
     const stale = !calendarSync.last_synced_at || Date.now() - new Date(calendarSync.last_synced_at).getTime() > 15 * 60 * 1000;
     if (stale) void syncCalendar(false);
     const timer = window.setInterval(() => void syncCalendar(false), 15 * 60 * 1000);
     return () => window.clearInterval(timer);
-  }, [calendarSync?.enabled, calendarSync?.last_synced_at, page, preview, syncCalendar]);
+  }, [calendarSync?.enabled, calendarSync?.last_sync_status, calendarSync?.last_synced_at, page, preview, syncCalendar]);
 
   const addBill = async (bill: Omit<Bill, "id" | "user_id">) => {
     if (preview) { setBills((items) => [...items, { ...bill, id: Date.now(), user_id: "preview" }]); showToast({ message: "Bill added in preview." }); return; }
