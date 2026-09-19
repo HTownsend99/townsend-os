@@ -5,7 +5,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { supabase } from "./supabaseClient";
 import { billDueLabel, dateForDue, dueLabel, formatAUD, ordinal, toLocalISODate } from "./dateUtils";
 import { Icon } from "./Icon";
-import type { AppPage, Bill, CalendarEvent, DueValue, InboxItem, Priority, Task, TaskView } from "./types";
+import type { AppPage, Bill, CalendarEvent, CalendarSyncSettings, DueValue, InboxItem, Priority, Task, TaskView } from "./types";
 import "./App.css";
 
 const WealthPage = lazy(() => import("./WealthPage"));
@@ -38,7 +38,6 @@ const CATEGORY_COLOURS: Record<string, string> = {
   Socialising: "#79538d",
 };
 
-const FUTURE_CATEGORIES = new Set(["Future Buys", "Shopping", "Concepts", "Long Term", "Job / Career", "Socialising"]);
 const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
   { id: "tasks", label: "Tasks", icon: "check-square" },
   { id: "calendar", label: "Calendar", icon: "calendar" },
@@ -48,10 +47,10 @@ const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0][
 ];
 
 const PREVIEW_TASKS: Task[] = [
-  { id: 1, user_id: "preview", cat: "Today", name: "Review the morning brief", done: false, priority: "high", due: { type: "today" }, urgent: true },
-  { id: 2, user_id: "preview", cat: "Admin", name: "Prepare documents for Friday", done: false, priority: "medium", due: { type: "tomorrow" }, urgent: false },
+  { id: 1, user_id: "preview", cat: "Today", name: "Review the morning brief", done: false, priority: "high", priority_code: "P1", workflow_status: "open", due: { type: "today" }, urgent: true, external_id: "RAD-PREVIEW-001", next_action: "Review the priority items and choose the first concrete action.", evidence: "Confirmed", source: "Radar action register", last_checked: "2026-09-20" },
+  { id: 2, user_id: "preview", cat: "Admin", name: "Prepare documents for Friday", done: false, priority: "medium", workflow_status: "waiting", due: { type: "tomorrow" }, urgent: false },
   { id: 3, user_id: "preview", cat: "Health", name: "Plan next week's training", done: false, priority: "low", due: null, urgent: false },
-  { id: 4, user_id: "preview", cat: "Long Term", name: "Outline the next quarterly goal", done: false, priority: "medium", due: { type: "month" }, urgent: false },
+  { id: 4, user_id: "preview", cat: "Long Term", name: "Outline the next quarterly goal", done: false, priority: "medium", workflow_status: "backlog", due: { type: "month" }, urgent: false },
   { id: 5, user_id: "preview", cat: "Today", name: "Complete weekly review", done: true, priority: "high", due: { type: "today" }, urgent: false, completed_at: new Date().toISOString() },
 ];
 const PREVIEW_BILLS: Bill[] = [
@@ -223,7 +222,10 @@ function TaskRow({ task, onToggle, onActions }: { task: Task; onToggle: () => vo
         <span className="task-name">{task.name}</span>
         <span className="task-meta">
           <span className="badge neutral">{task.cat}</span>
-          <span className={`badge badge-dot ${task.priority === "high" ? "danger" : task.priority === "medium" ? "warning" : "info"}`}>{task.priority}</span>
+          <span className={`badge badge-dot ${task.priority === "high" ? "danger" : task.priority === "medium" ? "warning" : "info"}`}>{task.priority_code || task.priority}</span>
+          {task.workflow_status === "waiting" && <span className="badge info">Waiting</span>}
+          {task.workflow_status === "backlog" && <span className="badge neutral">Backlog</span>}
+          {task.evidence && <span className={`badge ${task.evidence === "Confirmed" ? "success" : task.evidence === "Verify first" ? "warning" : "neutral"}`}>{task.evidence}</span>}
           {due && <span className={`badge ${due.tone}`}>{due.text}</span>}
         </span>
       </div>
@@ -258,13 +260,24 @@ function TaskActionDialog({ task, saving, onClose, onUpdate, onDelete }: {
           <div className="field">
             <label htmlFor="task-category">Category</label>
             <select id="task-category" className="select" value={task.cat} disabled={saving} onChange={(event) => onUpdate({ cat: event.target.value })}>
-              {TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+              {Array.from(new Set([...TASK_CATEGORIES, task.cat])).map((category) => <option key={category}>{category}</option>)}
             </select>
           </div>
         </div>
         <div className="field">
           <label htmlFor="task-due">Due date</label>
           <input id="task-due" className="input" type="date" disabled={saving} value={dateForDue(task.due) ?? ""} onChange={(event) => onUpdate({ due: event.target.value ? { type: "custom", date: event.target.value } : null })} />
+        </div>
+        {(task.next_action || task.source || task.external_id) && <div className="task-detail-block">
+          {task.next_action && <div><span className="overline">Next action</span><p>{task.next_action}</p></div>}
+          {task.source && <div><span className="overline">Source</span><p>{task.source}</p></div>}
+          <div className="task-provenance">{task.external_id}{task.last_checked ? ` · checked ${new Date(`${task.last_checked}T00:00:00`).toLocaleDateString("en-AU")}` : ""}</div>
+        </div>}
+        <div className="field">
+          <label htmlFor="task-workflow">Workflow</label>
+          <select id="task-workflow" className="select" value={task.workflow_status || "open"} disabled={saving} onChange={(event) => onUpdate({ workflow_status: event.target.value as Task["workflow_status"] })}>
+            <option value="open">Open</option><option value="waiting">Waiting</option><option value="backlog">Backlog</option>
+          </select>
         </div>
         <button className="button danger" disabled={saving} onClick={onDelete}><Icon name="trash-2" /> Delete task</button>
       </div>
@@ -280,19 +293,19 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
   onUpdate: (task: Task, changes: Partial<Task>) => void;
   onDelete: (task: Task) => void;
 }) {
-  const [view, setView] = useState<TaskView>("active");
+  const [view, setView] = useState<TaskView>("open");
   const [category, setCategory] = useState("All");
   const [newTask, setNewTask] = useState("");
   const [newCategory, setNewCategory] = useState("Today");
   const [selected, setSelected] = useState<Task | null>(null);
+  const categories = useMemo(() => Array.from(new Set([...TASK_CATEGORIES, ...tasks.map((task) => task.cat)])).sort((a, b) => a.localeCompare(b)), [tasks]);
   const filtered = tasks.filter((task) => {
     if (view === "completed" && !task.done) return false;
     if (view !== "completed" && task.done) return false;
-    if (view === "active" && FUTURE_CATEGORIES.has(task.cat)) return false;
-    if (view === "future" && !FUTURE_CATEGORIES.has(task.cat)) return false;
+    if (view !== "completed" && (task.workflow_status || "open") !== view) return false;
     return category === "All" || task.cat === category;
   });
-  const availableCategories = TASK_CATEGORIES.filter((item) => view === "completed" || (view === "future" ? FUTURE_CATEGORIES.has(item) : !FUTURE_CATEGORIES.has(item)));
+  const availableCategories = categories.filter((item) => tasks.some((task) => task.cat === item && (view === "completed" ? task.done : !task.done && (task.workflow_status || "open") === view)));
   const urgent = tasks.filter((task) => !task.done && (task.urgent || task.priority === "high")).length;
   const done = tasks.filter((task) => task.done).length;
 
@@ -315,7 +328,7 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
         <div className="stat success"><strong>{done}</strong><span className="overline">Complete</span></div>
       </div>
       <div className="segmented" role="group" aria-label="Task view">
-        {(["active", "future", "completed"] as TaskView[]).map((item) => <button key={item} className={`segment${view === item ? " active" : ""}`} onClick={() => setView(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}
+        {(["open", "waiting", "backlog", "completed"] as TaskView[]).map((item) => <button key={item} className={`segment${view === item ? " active" : ""}`} onClick={() => setView(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}
       </div>
       <div className="filter-row" aria-label="Filter by category">
         {["All", ...availableCategories].map((item) => <button key={item} className={`filter${category === item ? " active" : ""}`} onClick={() => setCategory(item)}>{item}</button>)}
@@ -326,12 +339,12 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
           {filtered.length ? filtered.map((task) => <TaskRow key={task.id} task={task} onToggle={() => onToggle(task)} onActions={() => setSelected(task)} />) : <div className="empty-state">Nothing here. Add a task when you are ready.</div>}
         </div>
       </section>
-      {view !== "completed" && (
+      {view === "open" && (
         <form className="composer" onSubmit={submit}>
           <label className="sr-only" htmlFor="new-task">New task</label>
           <input id="new-task" className="input" placeholder="Add a task…" value={newTask} onChange={(event) => setNewTask(event.target.value)} />
           <label className="sr-only" htmlFor="new-task-category">Category</label>
-          <select id="new-task-category" className="select" value={newCategory} onChange={(event) => setNewCategory(event.target.value)}>{TASK_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select>
+          <select id="new-task-category" className="select" value={newCategory} onChange={(event) => setNewCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
           <button className="button" disabled={saving || !newTask.trim()} aria-label="Add task"><Icon name="plus" /></button>
         </form>
       )}
@@ -340,13 +353,26 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
   );
 }
 
-function CalendarPage({ tasks, events, saving, onAdd, onDelete }: { tasks: Task[]; events: CalendarEvent[]; saving: boolean; onAdd: (event: Omit<CalendarEvent, "id" | "user_id">) => void; onDelete: (event: CalendarEvent) => void }) {
+function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, onDelete, onConfigureSync, onSync }: {
+  tasks: Task[];
+  events: CalendarEvent[];
+  saving: boolean;
+  syncSettings: CalendarSyncSettings | null;
+  syncBusy: boolean;
+  onAdd: (event: Omit<CalendarEvent, "id" | "user_id">) => void;
+  onDelete: (event: CalendarEvent) => void;
+  onConfigureSync: (feedUrl: string, calendarName: string) => Promise<boolean>;
+  onSync: () => Promise<void>;
+}) {
   const today = new Date();
   const [month, setMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected] = useState(toLocalISODate(today));
   const [adding, setAdding] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
   const [title, setTitle] = useState("");
   const [time, setTime] = useState("");
+  const [feedUrl, setFeedUrl] = useState("");
+  const [calendarName, setCalendarName] = useState(syncSettings?.calendar_name || "My calendar");
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const leading = new Date(year, monthIndex, 1).getDay();
@@ -355,6 +381,8 @@ function CalendarPage({ tasks, events, saving, onAdd, onDelete }: { tasks: Task[
   const datedTasks = tasks.filter((task) => dateForDue(task.due) === selected);
   const datedEvents = events.filter((event) => event.date === selected);
 
+  useEffect(() => setCalendarName(syncSettings?.calendar_name || "My calendar"), [syncSettings?.calendar_name]);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;
@@ -362,9 +390,27 @@ function CalendarPage({ tasks, events, saving, onAdd, onDelete }: { tasks: Task[
     setTitle(""); setTime(""); setAdding(false);
   };
 
+  const configureSync = async (event: FormEvent) => {
+    event.preventDefault();
+    const connected = await onConfigureSync(feedUrl.trim(), calendarName.trim() || "My calendar");
+    if (!connected) return;
+    setFeedUrl("");
+    setConfiguring(false);
+  };
+
   return (
     <main className="content">
-      <div className="page-heading"><div><h1>Calendar</h1><p>Tasks and events, arranged by date.</p></div><button className="button" onClick={() => setAdding(true)}><Icon name="plus" /> Add event</button></div>
+      <div className="page-heading"><div><h1>Calendar</h1><p>Tasks, Townsend OS events, and your private calendar feed.</p></div><button className="button" onClick={() => setAdding(true)}><Icon name="plus" /> Add event</button></div>
+      <section className={`sync-panel ${syncSettings?.last_sync_status || "never"}`}>
+        <div className="sync-copy">
+          <span className="sync-icon"><Icon name="refresh-cw" /></span>
+          <div><strong>{syncSettings?.enabled ? syncSettings.calendar_name : "Connect your calendar"}</strong><p>{syncSettings?.last_sync_status === "success" && syncSettings.last_synced_at ? `Synced ${new Date(syncSettings.last_synced_at).toLocaleString("en-AU")}` : syncSettings?.last_sync_status === "error" ? syncSettings.last_sync_error || "The last sync failed." : "Add a private iCalendar address for read-only sync."}</p></div>
+        </div>
+        <div className="sync-actions">
+          {syncSettings?.enabled && <button className="button secondary" disabled={syncBusy} onClick={onSync}><Icon name="refresh-cw" /> {syncBusy ? "Syncing…" : "Sync now"}</button>}
+          <button className="button secondary" onClick={() => setConfiguring(true)}>{syncSettings?.enabled ? "Settings" : "Connect"}</button>
+        </div>
+      </section>
       <section className="calendar-card">
         <div className="calendar-head">
           <button className="icon-button" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))} aria-label="Previous month"><Icon name="chevron-left" /></button>
@@ -384,8 +430,9 @@ function CalendarPage({ tasks, events, saving, onAdd, onDelete }: { tasks: Task[
       <div className="section-heading"><h2>{new Date(`${selected}T00:00:00`).toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h2></div>
       {!datedTasks.length && !datedEvents.length && <div className="empty-state panel">No tasks or events on this date.</div>}
       {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
-      {datedEvents.map((item) => <div className="event-row" key={`event-${item.id}`}><Icon name="calendar" /><div className="row-main"><strong>{item.title}</strong><p>{item.time || "All day"}{item.note ? ` · ${item.note}` : ""}</p></div><button className="icon-button danger" disabled={saving} onClick={() => onDelete(item)} aria-label={`Delete ${item.title}`}><Icon name="trash-2" /></button></div>)}
+      {datedEvents.map((item) => <div className="event-row" key={`event-${item.id}`}><Icon name="calendar" /><div className="row-main"><strong>{item.title}</strong><p>{item.time || "All day"}{item.location ? ` · ${item.location}` : ""}{item.note ? ` · ${item.note}` : ""}</p>{item.source === "ical" && <span className="event-source">{item.source_calendar || "Synced calendar"} · read only</span>}</div>{item.source !== "ical" && <button className="icon-button danger" disabled={saving} onClick={() => onDelete(item)} aria-label={`Delete ${item.title}`}><Icon name="trash-2" /></button>}</div>)}
       {adding && <Dialog title="Add event" onClose={() => setAdding(false)}><form onSubmit={submit}><div className="field"><label htmlFor="event-title">Event name</label><input id="event-title" className="input" required value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field-row"><div className="field"><label htmlFor="event-date">Date</label><input id="event-date" className="input" type="date" required value={selected} onChange={(event) => setSelected(event.target.value)} /></div><div className="field"><label htmlFor="event-time">Time</label><input id="event-time" className="input" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></div></div><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setAdding(false)}>Cancel</button><button className="button" disabled={saving}>Add event</button></div></form></Dialog>}
+      {configuring && <Dialog title="Calendar sync" onClose={() => setConfiguring(false)}><form onSubmit={configureSync}><p className="dialog-intro">In Google Calendar, open your calendar settings and copy the private address in iCal format. Townsend OS will only read it.</p><div className="field"><label htmlFor="calendar-name">Calendar name</label><input id="calendar-name" className="input" required value={calendarName} onChange={(event) => setCalendarName(event.target.value)} /></div><div className="field"><label htmlFor="calendar-feed">Private iCalendar address</label><input id="calendar-feed" className="input" type="url" inputMode="url" required placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value={feedUrl} onChange={(event) => setFeedUrl(event.target.value)} /><small>Stored privately. Never share this address or commit it to code.</small></div><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setConfiguring(false)}>Cancel</button><button className="button" disabled={syncBusy || !feedUrl.trim()}>{syncBusy ? "Connecting…" : "Connect and sync"}</button></div></form></Dialog>}
     </main>
   );
 }
@@ -437,6 +484,8 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>(preview ? PREVIEW_TASKS : []);
   const [bills, setBills] = useState<Bill[]>(preview ? PREVIEW_BILLS : []);
   const [events, setEvents] = useState<CalendarEvent[]>(preview ? PREVIEW_EVENTS : []);
+  const [calendarSync, setCalendarSync] = useState<CalendarSyncSettings | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
   const [inbox, setInbox] = useState<InboxItem[]>(preview ? PREVIEW_INBOX : []);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<Toast>(null);
@@ -461,6 +510,7 @@ export default function App() {
         setTasks([]);
         setBills([]);
         setEvents([]);
+        setCalendarSync(null);
         setInbox([]);
       }
     });
@@ -471,13 +521,14 @@ export default function App() {
     if (preview) return;
     if (!userId) return;
     setLoading(true); setError("");
-    const [taskResult, billResult, eventResult, inboxResult] = await Promise.all([
+    const [taskResult, billResult, eventResult, inboxResult, calendarSyncResult] = await Promise.all([
       supabase.from("tasks").select("*").order("created_at", { ascending: true }),
       supabase.from("bills").select("*").order("created_at", { ascending: true }),
       supabase.from("events").select("*").order("date", { ascending: true }),
       supabase.from("inbox_items").select("*").order("priority", { ascending: true }).order("created_at", { ascending: false }),
+      supabase.from("calendar_sync_settings").select("calendar_name, enabled, last_synced_at, last_sync_status, last_sync_error").maybeSingle(),
     ]);
-    const firstError = taskResult.error || billResult.error || eventResult.error || inboxResult.error;
+    const firstError = taskResult.error || billResult.error || eventResult.error || inboxResult.error || calendarSyncResult.error;
     if (firstError) {
       if (import.meta.env.DEV) console.error("Workspace load failed", firstError);
       setError("Unable to load your workspace. Please try again.");
@@ -487,6 +538,7 @@ export default function App() {
       setBills((billResult.data ?? []) as Bill[]);
       setEvents((eventResult.data ?? []) as CalendarEvent[]);
       setInbox((inboxResult.data ?? []) as InboxItem[]);
+      setCalendarSync(calendarSyncResult.data as CalendarSyncSettings | null);
     }
     setLoading(false);
   }, [preview, userId]);
@@ -541,6 +593,54 @@ export default function App() {
   };
   const deleteEvent = (event: CalendarEvent) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("events").delete().eq("id", event.id).eq("user_id", userId!).select("id").single(), () => setEvents((items) => items.filter((item) => item.id !== event.id)), "Event deleted.");
 
+  const syncCalendar = useCallback(async (notify = true) => {
+    if (preview || !userId || syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const { data, error: syncError } = await supabase.functions.invoke("calendar-sync", { body: { action: "sync" } });
+      if (syncError) throw syncError;
+      if (data?.error) throw new Error(data.error);
+      await fetchData();
+      if (notify) showToast({ message: `${data?.synced ?? 0} calendar events synced.` });
+    } catch (caught) {
+      if (import.meta.env.DEV) console.error("Calendar sync failed", caught);
+      if (notify) showToast({ message: "Calendar sync failed. Check the private iCalendar address and try again.", error: true });
+      await fetchData();
+    } finally {
+      setSyncBusy(false);
+    }
+  }, [fetchData, preview, showToast, syncBusy, userId]);
+
+  const configureCalendarSync = async (feedUrl: string, calendarName: string) => {
+    if (preview) { setCalendarSync({ calendar_name: calendarName, enabled: true, last_synced_at: new Date().toISOString(), last_sync_status: "success", last_sync_error: null }); return true; }
+    if (!userId) return false;
+    setSyncBusy(true);
+    try {
+      const { error: saveError } = await supabase.from("calendar_sync_settings").upsert({ user_id: userId, feed_url: feedUrl, calendar_name: calendarName, enabled: true }, { onConflict: "user_id" });
+      if (saveError) throw saveError;
+      const { data, error: syncError } = await supabase.functions.invoke("calendar-sync", { body: { action: "sync" } });
+      if (syncError) throw syncError;
+      if (data?.error) throw new Error(data.error);
+      await fetchData();
+      showToast({ message: `Calendar connected. ${data?.synced ?? 0} events synced.` });
+      return true;
+    } catch (caught) {
+      if (import.meta.env.DEV) console.error("Calendar connection failed", caught);
+      showToast({ message: "The calendar could not be connected. Check the private iCalendar address and try again.", error: true });
+      return false;
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (page !== "calendar" || preview || !calendarSync?.enabled) return;
+    const stale = !calendarSync.last_synced_at || Date.now() - new Date(calendarSync.last_synced_at).getTime() > 15 * 60 * 1000;
+    if (stale) void syncCalendar(false);
+    const timer = window.setInterval(() => void syncCalendar(false), 15 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [calendarSync?.enabled, calendarSync?.last_synced_at, page, preview, syncCalendar]);
+
   const addBill = async (bill: Omit<Bill, "id" | "user_id">) => {
     if (preview) { setBills((items) => [...items, { ...bill, id: Date.now(), user_id: "preview" }]); showToast({ message: "Bill added in preview." }); return; }
     if (!userId) return;
@@ -567,7 +667,7 @@ export default function App() {
       {error && <div className="content"><div className="page-error" role="alert">Could not load your workspace: {error} <button className="text-button" onClick={fetchData}>Try again</button></div></div>}
       {loading ? <div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading your workspace…</div></div> : <>
         {page === "tasks" && <TasksPage tasks={tasks} saving={saving} onAdd={addTask} onToggle={(task) => updateTask(task, { done: !task.done, completed_at: task.done ? null : new Date().toISOString() })} onUpdate={updateTask} onDelete={deleteTask} />}
-        {page === "calendar" && <CalendarPage tasks={tasks} events={events} saving={saving} onAdd={addEvent} onDelete={deleteEvent} />}
+        {page === "calendar" && <CalendarPage tasks={tasks} events={events} saving={saving} syncSettings={calendarSync} syncBusy={syncBusy} onAdd={addEvent} onDelete={deleteEvent} onConfigureSync={configureCalendarSync} onSync={() => syncCalendar(true)} />}
         {page === "inbox" && <InboxPage items={inbox} saving={saving} onArchive={archiveInbox} />}
         {page === "bills" && <BillsPage bills={bills} saving={saving} onAdd={addBill} onDelete={deleteBill} />}
         {page === "wealth" && <Suspense fallback={<div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading Wealth…</div></div>}><WealthPage preview={preview} userId={userId || "preview"} onToast={showToast} /></Suspense>}

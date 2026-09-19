@@ -10,6 +10,14 @@ create table if not exists public.tasks (
   priority text not null default 'medium' check (priority in ('high', 'medium', 'low')),
   due jsonb,
   urgent boolean not null default false,
+  external_id text,
+  priority_code text check (priority_code is null or priority_code in ('P0', 'P1', 'P2', 'P3', 'P4')),
+  workflow_status text not null default 'open' check (workflow_status in ('open', 'waiting', 'backlog')),
+  next_action text,
+  evidence text,
+  source text,
+  owner_label text,
+  last_checked date,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -33,6 +41,25 @@ create table if not exists public.events (
   date date,
   time text,
   note text,
+  end_date date,
+  end_time text,
+  all_day boolean not null default false,
+  location text,
+  external_id text,
+  source text not null default 'manual' check (source in ('manual', 'ical')),
+  source_calendar text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.calendar_sync_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  feed_url text not null check (feed_url ~ '^https://'),
+  calendar_name text not null default 'My calendar',
+  enabled boolean not null default true,
+  last_synced_at timestamptz,
+  last_sync_status text not null default 'never' check (last_sync_status in ('never', 'success', 'error')),
+  last_sync_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -57,15 +84,19 @@ alter table public.tasks enable row level security;
 alter table public.bills enable row level security;
 alter table public.events enable row level security;
 alter table public.inbox_items enable row level security;
+alter table public.calendar_sync_settings enable row level security;
 
 create policy "Users can manage own tasks" on public.tasks for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "Users can manage own bills" on public.bills for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "Users can manage own events" on public.events for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "Users can manage own inbox items" on public.inbox_items for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+create policy "Users can manage own calendar sync" on public.calendar_sync_settings for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
 create index if not exists tasks_user_id_idx on public.tasks (user_id);
 create index if not exists bills_user_id_idx on public.bills (user_id);
 create index if not exists events_user_id_idx on public.events (user_id);
+create unique index if not exists tasks_user_external_id_idx on public.tasks (user_id, external_id);
+create unique index if not exists events_user_external_id_idx on public.events (user_id, external_id);
 create index if not exists inbox_items_user_id_idx on public.inbox_items (user_id);
 
 create or replace function public.set_updated_at()
@@ -85,5 +116,7 @@ drop trigger if exists set_bills_updated_at on public.bills;
 create trigger set_bills_updated_at before update on public.bills for each row execute function public.set_updated_at();
 drop trigger if exists set_events_updated_at on public.events;
 create trigger set_events_updated_at before update on public.events for each row execute function public.set_updated_at();
+drop trigger if exists set_calendar_sync_updated_at on public.calendar_sync_settings;
+create trigger set_calendar_sync_updated_at before update on public.calendar_sync_settings for each row execute function public.set_updated_at();
 drop trigger if exists set_inbox_updated_at on public.inbox_items;
 create trigger set_inbox_updated_at before update on public.inbox_items for each row execute function public.set_updated_at();
