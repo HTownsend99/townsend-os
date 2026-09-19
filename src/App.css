@@ -7,11 +7,15 @@
   --ink-700: #14384f;
   --ink-600: #1c4d6b;
   --ink-500: #246389;
+  --ink-300: #6ba6c4;
   --ink-100: #d6e6ee;
   --ink-50: #eef5f8;
   --pine-700: #105443;
   --pine-600: #166f58;
   --pine-500: #1e8a6e;
+  --pine-400: #3da98a;
+  --pine-300: #6fc4ab;
+  --pine-200: #a6ddcc;
   --pine-100: #d2eee5;
   --pine-50: #ecf7f2;
   --slate-900: #14191d;
@@ -94,7 +98,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .app-shell { min-height: 100vh; padding-bottom: 82px; }
 .app-header { position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--slate-200); background: color-mix(in srgb, var(--paper) 96%, transparent); backdrop-filter: blur(10px); }
-.header-inner { max-width: 1040px; min-height: 68px; margin: 0 auto; padding: 10px 24px; display: flex; align-items: center; gap: 12px; }
+.header-inner { max-width: 1240px; min-height: 68px; margin: 0 auto; padding: 10px 24px; display: flex; align-items: center; gap: 12px; }
 .brand-copy { min-width: 0; flex: 1; }
 .brand-copy strong { display: block; color: var(--ink-800); font: 600 20px/1 var(--font-display); letter-spacing: -.02em; }
 .brand-copy span { display: block; margin-top: 4px; color: var(--slate-500); font: 10.5px/1.2 var(--font-mono); }

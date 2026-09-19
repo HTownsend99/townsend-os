@@ -57,5 +57,5 @@ export interface InboxItem {
   updated_at?: string | null;
 }
 
-export type AppPage = "tasks" | "calendar" | "inbox" | "bills";
+export type AppPage = "tasks" | "calendar" | "inbox" | "bills" | "wealth";
 export type TaskView = "active" | "future" | "completed";

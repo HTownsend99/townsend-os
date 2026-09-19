@@ -46,4 +46,4 @@ create index if not exists events_user_id_idx on public.events (user_id);
 create index if not exists inbox_items_user_id_idx on public.inbox_items (user_id);
 
 alter function public.set_updated_at() set search_path = public, pg_temp;
-alter function public.update_inbox_updated_at() set search_path = public, pg_temp;
+alter function public.update_inbox_updated_at() set search_path = public, pg_temp;;

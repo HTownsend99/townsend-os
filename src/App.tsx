@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { Analytics } from "@vercel/analytics/react";
@@ -7,6 +7,8 @@ import { billDueLabel, dateForDue, dueLabel, formatAUD, ordinal, toLocalISODate 
 import { Icon } from "./Icon";
 import type { AppPage, Bill, CalendarEvent, DueValue, InboxItem, Priority, Task, TaskView } from "./types";
 import "./App.css";
+
+const WealthPage = lazy(() => import("./WealthPage"));
 
 const TASK_CATEGORIES = [
   "Today",
@@ -42,6 +44,7 @@ const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0][
   { id: "calendar", label: "Calendar", icon: "calendar" },
   { id: "inbox", label: "Inbox", icon: "inbox" },
   { id: "bills", label: "Bills", icon: "credit-card" },
+  { id: "wealth", label: "Wealth", icon: "bar-chart" },
 ];
 
 const PREVIEW_TASKS: Task[] = [
@@ -423,13 +426,14 @@ function BillsPage({ bills, saving, onAdd, onDelete }: { bills: Bill[]; saving: 
 }
 
 export default function App() {
-  const preview = import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview");
+  const previewParams = new URLSearchParams(window.location.search);
+  const preview = import.meta.env.DEV && previewParams.has("preview");
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [page, setPage] = useState<AppPage>("tasks");
+  const [page, setPage] = useState<AppPage>(preview && previewParams.get("page") === "wealth" ? "wealth" : "tasks");
   const [tasks, setTasks] = useState<Task[]>(preview ? PREVIEW_TASKS : []);
   const [bills, setBills] = useState<Bill[]>(preview ? PREVIEW_BILLS : []);
   const [events, setEvents] = useState<CalendarEvent[]>(preview ? PREVIEW_EVENTS : []);
@@ -566,6 +570,7 @@ export default function App() {
         {page === "calendar" && <CalendarPage tasks={tasks} events={events} saving={saving} onAdd={addEvent} onDelete={deleteEvent} />}
         {page === "inbox" && <InboxPage items={inbox} saving={saving} onArchive={archiveInbox} />}
         {page === "bills" && <BillsPage bills={bills} saving={saving} onAdd={addBill} onDelete={deleteBill} />}
+        {page === "wealth" && <Suspense fallback={<div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading Wealth…</div></div>}><WealthPage preview={preview} userId={userId || "preview"} onToast={showToast} /></Suspense>}
       </>}
       <nav className="bottom-nav" aria-label="Primary navigation">{NAV.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)} aria-current={page === item.id ? "page" : undefined}><Icon name={item.icon} size={20} /><span>{item.label}</span></button>)}</nav>
       {toast && <div className={`toast${toast.error ? " error" : ""}`} role="status"><Icon name={toast.error ? "alert-triangle" : "check"} />{toast.message}</div>}

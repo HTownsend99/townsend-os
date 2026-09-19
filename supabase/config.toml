@@ -1,2 +1,5 @@
 [functions.morning-brief]
 verify_jwt = true
+
+[functions.wealth-import]
+verify_jwt = true
