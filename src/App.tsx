@@ -476,16 +476,14 @@ function InboxPage({ items, syncStatus, saving, refreshing, onArchive, onRefresh
   onArchive: (item: InboxItem) => void;
   onRefresh: () => void;
 }) {
+  const pageSize = 50;
   const [tab, setTab] = useState<"message" | "email">("message");
-  const sourceStatus = (item: InboxItem) => syncStatus.find((status) => status.source === (item.item_type === "message" ? "imessage" : "gmail"));
-  const currentSnapshot = items.filter((item) => {
-    if (!item.external_id) return false;
-    const syncedAt = sourceStatus(item)?.last_synced_at;
-    if (!syncedAt || !item.updated_at) return true;
-    return new Date(item.updated_at).getTime() >= new Date(syncedAt).getTime() - 5 * 60_000;
-  });
-  const syncedItems = currentSnapshot.length || items.some((item) => item.external_id) ? currentSnapshot : items;
-  const current = syncedItems.filter((item) => !item.archived && item.item_type === tab).sort((a, b) => a.priority - b.priority || new Date(b.source_date || b.created_at || 0).getTime() - new Date(a.source_date || a.created_at || 0).getTime());
+  const [pages, setPages] = useState<Record<"message" | "email", number>>({ message: 0, email: 0 });
+  const syncedItems = items.some((item) => item.external_id) ? items.filter((item) => item.external_id) : items;
+  const current = syncedItems.filter((item) => !item.archived && item.item_type === tab).sort((a, b) => new Date(b.source_date || b.created_at || 0).getTime() - new Date(a.source_date || a.created_at || 0).getTime());
+  const page = Math.min(pages[tab], Math.max(0, Math.ceil(current.length / pageSize) - 1));
+  const pageStart = page * pageSize;
+  const paged = current.slice(pageStart, pageStart + pageSize);
   const priority = current.filter((item) => item.priority === 1).slice(0, 3);
   const source = tab === "message" ? "imessage" : "gmail";
   const status = syncStatus.find((item) => item.source === source);
@@ -503,9 +501,10 @@ function InboxPage({ items, syncStatus, saving, refreshing, onArchive, onRefresh
       <div className="stat-grid" aria-label="Inbox summary"><div className="stat"><strong>{syncedItems.filter((item) => !item.archived).length}</strong><span className="overline">Open</span></div><div className="stat danger"><strong>{syncedItems.filter((item) => !item.archived && item.priority === 1).length}</strong><span className="overline">Priority</span></div><div className="stat success"><strong>{syncedItems.filter((item) => item.archived).length}</strong><span className="overline">Archived</span></div></div>
       <div className="inbox-tabs" role="tablist" aria-label="Inbox source"><button role="tab" aria-selected={tab === "message"} className={`inbox-tab${tab === "message" ? " active" : ""}`} onClick={() => setTab("message")}>iMessages <span>{messageCount}</span></button><button role="tab" aria-selected={tab === "email"} className={`inbox-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Gmail inbox <span>{emailCount}</span></button></div>
       <div className={`inbox-sync-status${status?.last_sync_status === "error" ? " error" : ""}`} role="status"><span className={`sync-dot${status?.last_sync_status === "success" ? " success" : status?.last_sync_status === "error" ? " error" : ""}`} /><span>{syncCopy}</span></div>
-      {priority.length > 0 && <aside className="triage"><span className="overline">Do these first</span><ol>{priority.map((item) => <li key={item.id}>{item.subject || `${item.platform || "Message"} from ${item.sender}`}</li>)}</ol></aside>}
+      {page === 0 && priority.length > 0 && <aside className="triage"><span className="overline">Do these first</span><ol>{priority.map((item) => <li key={item.id}>{item.subject || `${item.platform || "Message"} from ${item.sender}`}</li>)}</ol></aside>}
       {!current.length && <div className="empty-state panel">No open {tab === "message" ? "iMessages" : "Gmail messages"}.</div>}
-      {current.map((item) => <article className="inbox-card" key={item.id} style={{ "--accent": item.priority === 1 ? "#ae3b2e" : item.priority === 2 ? "#b07a12" : "#1f6f97" } as React.CSSProperties}><div className="inbox-head"><div><div className="inbox-sender">{item.sender}</div><div className="task-meta"><span className="badge neutral">{item.platform || (tab === "message" ? "iMessage" : "Gmail")}</span>{item.unread && <span className="badge info">Unread</span>}{item.flag && <span className="badge warning">{item.flag}</span>}</div></div><span className="inbox-age">{relativeAge(item.source_date, item.age)}</span></div>{item.subject && <div className="inbox-subject">{item.subject}</div>}<p className="inbox-content">{item.content}</p><div className="dialog-actions">{item.source_url && <a className="button secondary" href={item.source_url} target="_blank" rel="noreferrer">Open in Gmail</a>}<button className="button secondary" disabled={saving} onClick={() => onArchive(item)}><Icon name="archive" /> Archive</button></div></article>)}
+      {paged.map((item) => <article className="inbox-card" key={item.id} style={{ "--accent": item.priority === 1 ? "#ae3b2e" : item.priority === 2 ? "#b07a12" : "#1f6f97" } as React.CSSProperties}><div className="inbox-head"><div><div className="inbox-sender">{item.sender}</div><div className="task-meta"><span className="badge neutral">{item.platform || (tab === "message" ? "iMessage" : "Gmail")}</span>{item.unread && <span className="badge info">Unread</span>}{item.flag && <span className="badge warning">{item.flag}</span>}</div></div><span className="inbox-age">{relativeAge(item.source_date, item.age)}</span></div>{item.subject && <div className="inbox-subject">{item.subject}</div>}<p className="inbox-content">{item.content}</p><div className="dialog-actions">{item.source_url && <a className="button secondary" href={item.source_url} target="_blank" rel="noreferrer">Open in Gmail</a>}<button className="button secondary" disabled={saving} onClick={() => onArchive(item)}><Icon name="archive" /> Archive</button></div></article>)}
+      {current.length >= pageSize && <nav className="inbox-pagination" aria-label={`${tab === "message" ? "iMessage" : "Gmail"} pages`}><button className="button secondary" disabled={page === 0} onClick={() => setPages((value) => ({ ...value, [tab]: Math.max(0, page - 1) }))}><Icon name="chevron-left" /> Newer</button><span>{pageStart + 1}–{Math.min(pageStart + pageSize, current.length)} of {current.length}</span><button className="button secondary" disabled={pageStart + pageSize >= current.length} onClick={() => setPages((value) => ({ ...value, [tab]: page + 1 }))}>Older <Icon name="chevron-right" /></button></nav>}
     </main>
   );
 }
