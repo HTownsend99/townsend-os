@@ -104,13 +104,6 @@ type IcalEvent = {
   recurrences?: Record<string, IcalEvent>;
 };
 
-type ExpandedEvent = {
-  start: Date;
-  end: Date;
-  isFullDay: boolean;
-  event: IcalEvent;
-};
-
 function occurrenceRow(event: IcalEvent, occurrenceStart: Date, userId: string, calendarName: string) {
   const baseStart = event.start as Date;
   const baseEnd = event.end instanceof Date ? event.end : new Date(baseStart.getTime() + 60 * 60 * 1000);
@@ -145,14 +138,14 @@ function parseEvents(feed: string, userId: string, calendarName: string) {
 
   for (const item of Object.values(parsed)) {
     if (item.type !== "VEVENT" || !(item.start instanceof Date) || item.status === "CANCELLED") continue;
-    const fallbackEnd = item.end instanceof Date ? item.end : new Date(item.start.getTime() + 60 * 60 * 1000);
-    const instances = item.rrule
-      ? (ical.expandRecurringEvent(item as never, { from: windowStart, to: windowEnd }) as ExpandedEvent[])
-      : [{ start: item.start, end: fallbackEnd, isFullDay: item.datetype === "date" || Boolean(item.start.dateOnly), event: item }];
-    for (const instance of instances) {
-      if (instance.start < windowStart || instance.start >= windowEnd || instance.event.status === "CANCELLED") continue;
-      const effective = { ...instance.event, start: instance.start, end: instance.end, datetype: instance.isFullDay ? "date" : instance.event.datetype };
-      const effectiveStart = instance.start;
+    const starts = item.rrule ? item.rrule.between(windowStart, windowEnd, true) : [item.start];
+    for (const start of starts) {
+      if (start < windowStart || start >= windowEnd) continue;
+      const key = start.toISOString().slice(0, 10);
+      if (item.exdate && (item.exdate[key] || item.exdate[start.toISOString()])) continue;
+      const override = item.recurrences?.[key] || item.recurrences?.[start.toISOString()];
+      const effective = override && override.status !== "CANCELLED" ? override : item;
+      const effectiveStart = override?.start instanceof Date ? override.start : start;
       const row = occurrenceRow(effective, effectiveStart, userId, calendarName);
       if (!seen.has(row.external_id)) {
         seen.add(row.external_id);
