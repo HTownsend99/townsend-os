@@ -39,3 +39,4 @@ create policy "Users can read own inbox sync status" on public.inbox_sync_status
 drop trigger if exists set_inbox_sync_updated_at on public.inbox_sync_status;
 create trigger set_inbox_sync_updated_at before update on public.inbox_sync_status
   for each row execute function public.set_updated_at();
+;

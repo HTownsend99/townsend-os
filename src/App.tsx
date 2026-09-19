@@ -275,14 +275,13 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
   const [newTask, setNewTask] = useState("");
   const [newCategory, setNewCategory] = useState("Admin");
   const [selected, setSelected] = useState<Task | null>(null);
-  const categories = useMemo(() => TASK_CATEGORIES.filter((item) => tasks.some((task) => task.cat === item)), [tasks]);
   const filtered = tasks.filter((task) => {
     if (view === "completed" && !task.done) return false;
     if (view !== "completed" && task.done) return false;
     if (view !== "completed" && (task.workflow_status || "open") !== view) return false;
     return category === "All" || task.cat === category;
   });
-  const availableCategories = categories.filter((item) => tasks.some((task) => task.cat === item && (view === "completed" ? task.done : !task.done && (task.workflow_status || "open") === view)));
+  const availableCategories = TASK_CATEGORIES.filter((item) => tasks.some((task) => task.cat === item && (view === "completed" ? task.done : !task.done && (task.workflow_status || "open") === view)));
   const urgent = tasks.filter((task) => !task.done && (task.urgent || task.priority === "high")).length;
   const done = tasks.filter((task) => task.done).length;
 
@@ -321,7 +320,7 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
           <label className="sr-only" htmlFor="new-task">New task</label>
           <input id="new-task" className="input" placeholder="Add a task…" value={newTask} onChange={(event) => setNewTask(event.target.value)} />
           <label className="sr-only" htmlFor="new-task-category">Category</label>
-          <select id="new-task-category" className="select" value={newCategory} onChange={(event) => setNewCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
+          <select id="new-task-category" className="select" value={newCategory} onChange={(event) => setNewCategory(event.target.value)}>{TASK_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select>
           <button className="button" disabled={saving || !newTask.trim()} aria-label="Add task"><Icon name="plus" /></button>
         </form>
       )}
@@ -442,7 +441,7 @@ function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, on
       {dayTab === "tasks" ? (
         <div id="calendar-tasks-panel" role="tabpanel" aria-labelledby="calendar-tasks-tab" tabIndex={0}>
           {!datedTasks.length && <div className="empty-state panel">No tasks due or completed on this date.</div>}
-          {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
+          {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[canonicalTaskCategory(task.cat, task.name)] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
         </div>
       ) : (
         <div id="calendar-events-panel" role="tabpanel" aria-labelledby="calendar-events-tab" tabIndex={0}>
