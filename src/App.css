@@ -148,6 +148,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .task-name { display: block; color: var(--slate-900); font-size: 14.5px; font-weight: 600; line-height: 1.35; }
 .done .task-name { color: var(--slate-500); text-decoration: line-through; }
 .task-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 5px; color: var(--slate-500); font-size: 11px; }
+.task-detail-block { display: grid; gap: 12px; border: 1px solid var(--slate-200); border-radius: var(--radius-md); background: var(--slate-50); padding: 14px; }
+.task-detail-block p { margin: 4px 0 0; color: var(--slate-700); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.task-provenance { color: var(--slate-500); font: 500 11px/1.5 var(--font-mono); }
 .badge { display: inline-flex; align-items: center; gap: 5px; min-height: 23px; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 700; white-space: nowrap; }
 .badge.neutral { background: var(--slate-50); color: var(--slate-600); }
 .badge.info { background: var(--info-bg); color: var(--info-fg); }
@@ -161,6 +164,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .composer .button { width: 44px; padding: 0; }
 
 .calendar-card { border: 1px solid var(--slate-200); border-radius: var(--radius-lg); background: var(--white); padding: 16px; box-shadow: var(--shadow-xs); }
+.sync-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; border: 1px solid var(--slate-200); border-radius: var(--radius-lg); background: var(--white); padding: 14px 16px; box-shadow: var(--shadow-xs); }
+.sync-panel.error { border-color: #d7a19a; background: var(--danger-bg); }
+.sync-copy, .sync-actions { display: flex; align-items: center; gap: 10px; }
+.sync-copy { min-width: 0; }
+.sync-copy strong { display: block; color: var(--ink-800); font-size: 13px; }
+.sync-copy p { margin: 3px 0 0; color: var(--slate-500); font-size: 11.5px; line-height: 1.4; }
+.sync-icon { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: var(--info-bg); color: var(--info-fg); }
+.event-source { display: inline-block; margin-top: 4px; color: var(--slate-500); font-size: 10.5px; font-weight: 600; }
+.dialog-intro { margin: 0 0 16px; color: var(--slate-600); font-size: 13px; line-height: 1.55; }
+.field small { display: block; margin-top: 6px; color: var(--slate-500); font-size: 11px; line-height: 1.4; }
 .calendar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .calendar-head h2 { margin: 0; color: var(--ink-800); font: 600 22px/1 var(--font-display); }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
@@ -226,6 +239,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .composer { position: fixed; left: 0; right: 0; bottom: 72px; margin: 0; grid-template-columns: minmax(0,1fr) 96px 44px; border-radius: 0; border-left: 0; border-right: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
   .tasks-page { padding-bottom: 76px; }
   .calendar-day { min-height: 48px; }
+  .sync-panel { align-items: flex-start; flex-direction: column; }
+  .sync-actions { width: 100%; }
+  .sync-actions .button { flex: 1; }
   .bottom-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; border-top: 1px solid var(--slate-200); background: color-mix(in srgb, var(--white) 97%, transparent); padding: 5px 6px max(8px, env(safe-area-inset-bottom)); backdrop-filter: blur(12px); }
   .bottom-nav button { min-height: 56px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--slate-400); cursor: pointer; font-size: 10px; font-weight: 600; }
   .bottom-nav button.active { color: var(--ink-700); background: var(--ink-50); }
