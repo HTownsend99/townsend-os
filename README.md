@@ -14,6 +14,8 @@ For a data-safe local review, use `http://127.0.0.1:5173/?preview&page=wealth`. 
 
 The production Radar import is keyed by stable `RAD-...` IDs, so it can be reconciled without duplicate imported tasks. Imported details retain the next action, evidence state, source and workflow position from the audited workbook. Private task rows are stored only in the protected database, not in this public repository.
 
+Task subjects use eight headings: Admin, Career & Education, Finance, Health, Home & Pets, Personal, Projects and Legal. Due dates carry timing, while Open, Waiting and Backlog carry workflow state. The database normalises older labels on migration and future writes so duplicate category variants cannot return.
+
 Calendar sync is read-only and uses the private iCal address from Google Calendar. The address is stored in the owner-protected `calendar_sync_settings` table and is fetched only by the authenticated `calendar-sync` Edge Function. Townsend OS refreshes a stale feed when the Calendar screen opens and every 15 minutes while that screen remains open. Synced events are labelled read-only; events created directly in Townsend OS remain editable.
 
 ## Security model

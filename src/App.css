@@ -187,6 +187,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .selected .dot { background: var(--pine-100); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 22px 0 10px; }
 .section-heading h2 { margin: 0; color: var(--ink-800); font: 600 20px/1.1 var(--font-display); }
+.day-detail-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--slate-200); }
+.day-detail-tab { position: relative; display: inline-flex; min-height: 44px; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--slate-500); padding: 9px 12px 11px; cursor: pointer; font: 500 14px var(--font-sans); }
+.day-detail-tab::after { position: absolute; right: 6px; bottom: -1px; left: 6px; height: 3px; border-radius: 2px 2px 0 0; background: transparent; content: ""; }
+.day-detail-tab.active { color: var(--ink-700); font-weight: 700; }
+.day-detail-tab.active::after { background: var(--ink-700); }
+.day-detail-tab span { border-radius: 999px; background: var(--slate-100); color: var(--slate-500); padding: 1px 6px; font: 700 11px var(--font-sans); }
+.day-detail-tab.active span { background: var(--ink-50); color: var(--ink-700); }
 .event-row, .bill-row, .inbox-card { margin-bottom: 8px; border: 1px solid var(--slate-200); border-left: 3px solid var(--accent, var(--info)); border-radius: var(--radius-md); background: var(--white); padding: 12px 13px; }
 .event-row, .bill-row { display: flex; align-items: center; gap: 12px; }
 .row-main { flex: 1; min-width: 0; }
@@ -208,6 +215,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .inbox-subject { margin-top: 5px; color: var(--slate-700); font-size: 13px; font-weight: 600; }
 .inbox-content { margin: 5px 0 0; color: var(--slate-500); font-size: 12.5px; line-height: 1.5; }
 .inbox-age { color: var(--slate-400); font: 10px var(--font-mono); white-space: nowrap; }
+.inbox-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--slate-200); }
+.inbox-tab { position: relative; display: inline-flex; min-height: 44px; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--slate-500); padding: 9px 12px 11px; cursor: pointer; font: 500 14px var(--font-sans); }
+.inbox-tab::after { position: absolute; right: 6px; bottom: -1px; left: 6px; height: 3px; border-radius: 2px 2px 0 0; background: transparent; content: ""; }
+.inbox-tab.active { color: var(--ink-700); font-weight: 700; }
+.inbox-tab.active::after { background: var(--ink-700); }
+.inbox-tab span { border-radius: 999px; background: var(--slate-100); color: var(--slate-500); padding: 1px 6px; font: 700 11px var(--font-sans); }
+.inbox-tab.active span { background: var(--ink-50); color: var(--ink-700); }
+.inbox-sync-status { display: flex; align-items: center; gap: 7px; min-height: 28px; margin-bottom: 14px; color: var(--slate-500); font-size: 11.5px; }
+.inbox-sync-status.error { color: var(--danger-fg); }
+.sync-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--slate-300); }
+.sync-dot.success { background: var(--pine-600); }
+.sync-dot.error { background: var(--danger); }
 
 .dialog-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; overflow-y: auto; background: rgba(0,0,0,.35); padding: 20px; }
 .dialog { width: min(100%, 420px); max-height: min(720px, 88vh); overflow-y: auto; border: 1px solid var(--slate-200); border-radius: var(--radius-lg); background: var(--white); box-shadow: 0 28px 64px rgba(11,31,46,.18); padding: 20px; }

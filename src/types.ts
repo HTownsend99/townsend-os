@@ -68,7 +68,21 @@ export interface InboxItem {
   flag: string | null;
   priority: 1 | 2 | 3;
   archived: boolean | null;
+  external_id?: string | null;
+  source_date?: string | null;
+  source_url?: string | null;
+  unread?: boolean | null;
   created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface InboxSyncStatus {
+  user_id: string;
+  source: "imessage" | "gmail";
+  last_synced_at: string | null;
+  last_sync_status: "never" | "success" | "error";
+  last_sync_error: string | null;
+  item_count: number;
   updated_at?: string | null;
 }
 

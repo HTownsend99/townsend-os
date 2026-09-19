@@ -5,38 +5,11 @@ import { Analytics } from "@vercel/analytics/react";
 import { supabase } from "./supabaseClient";
 import { billDueLabel, dateForDue, dueLabel, formatAUD, ordinal, toLocalISODate } from "./dateUtils";
 import { Icon } from "./Icon";
-import type { AppPage, Bill, CalendarEvent, CalendarSyncSettings, DueValue, InboxItem, Priority, Task, TaskView } from "./types";
+import { canonicalTaskCategory, canonicalizeTask, CATEGORY_COLOURS, TASK_CATEGORIES } from "./taskCategories";
+import type { AppPage, Bill, CalendarEvent, CalendarSyncSettings, DueValue, InboxItem, InboxSyncStatus, Priority, Task, TaskView } from "./types";
 import "./App.css";
 
 const WealthPage = lazy(() => import("./WealthPage"));
-
-const TASK_CATEGORIES = [
-  "Today",
-  "Upcoming",
-  "Admin",
-  "Financial",
-  "Health",
-  "Future Buys",
-  "Shopping",
-  "Concepts",
-  "Long Term",
-  "Job / Career",
-  "Socialising",
-] as const;
-
-const CATEGORY_COLOURS: Record<string, string> = {
-  Today: "#b07a12",
-  Upcoming: "#1f6f97",
-  Admin: "#71569a",
-  Financial: "#15795b",
-  Health: "#4f7c45",
-  "Future Buys": "#8b5886",
-  Shopping: "#9b6724",
-  Concepts: "#257d78",
-  "Long Term": "#53639b",
-  "Job / Career": "#846c25",
-  Socialising: "#79538d",
-};
 
 const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0]["name"] }> = [
   { id: "tasks", label: "Tasks", icon: "check-square" },
@@ -47,11 +20,11 @@ const NAV: Array<{ id: AppPage; label: string; icon: Parameters<typeof Icon>[0][
 ];
 
 const PREVIEW_TASKS: Task[] = [
-  { id: 1, user_id: "preview", cat: "Today", name: "Review the morning brief", done: false, priority: "high", priority_code: "P1", workflow_status: "open", due: { type: "today" }, urgent: true, external_id: "RAD-PREVIEW-001", next_action: "Review the priority items and choose the first concrete action.", evidence: "Confirmed", source: "Radar action register", last_checked: "2026-09-20" },
+  { id: 1, user_id: "preview", cat: "Admin", name: "Review the morning brief", done: false, priority: "high", priority_code: "P1", workflow_status: "open", due: { type: "today" }, urgent: true, external_id: "RAD-PREVIEW-001", next_action: "Review the priority items and choose the first concrete action.", evidence: "Confirmed", source: "Radar action register", last_checked: "2026-09-20" },
   { id: 2, user_id: "preview", cat: "Admin", name: "Prepare documents for Friday", done: false, priority: "medium", workflow_status: "waiting", due: { type: "tomorrow" }, urgent: false },
   { id: 3, user_id: "preview", cat: "Health", name: "Plan next week's training", done: false, priority: "low", due: null, urgent: false },
-  { id: 4, user_id: "preview", cat: "Long Term", name: "Outline the next quarterly goal", done: false, priority: "medium", workflow_status: "backlog", due: { type: "month" }, urgent: false },
-  { id: 5, user_id: "preview", cat: "Today", name: "Complete weekly review", done: true, priority: "high", due: { type: "today" }, urgent: false, completed_at: new Date().toISOString() },
+  { id: 4, user_id: "preview", cat: "Projects", name: "Outline the next quarterly goal", done: false, priority: "medium", workflow_status: "backlog", due: { type: "month" }, urgent: false },
+  { id: 5, user_id: "preview", cat: "Admin", name: "Complete weekly review", done: true, priority: "high", due: { type: "today" }, urgent: false, completed_at: new Date().toISOString() },
 ];
 const PREVIEW_BILLS: Bill[] = [
   { id: 1, user_id: "preview", name: "Home internet", amount: 89, freq: "Monthly", day: 12 },
@@ -61,8 +34,12 @@ const PREVIEW_EVENTS: CalendarEvent[] = [
   { id: 1, user_id: "preview", title: "Weekly planning", date: toLocalISODate(new Date()), time: "08:30", note: null },
 ];
 const PREVIEW_INBOX: InboxItem[] = [
-  { id: 1, user_id: "preview", item_type: "message", sender: "Alex", platform: "Messages", subject: null, content: "Can we confirm the time for tomorrow?", age: "2h", flag: "Reply", priority: 1, archived: false },
-  { id: 2, user_id: "preview", item_type: "email", sender: "Building manager", platform: "Email", subject: "Annual access review", content: "Please review the attached access details this week.", age: "1d", flag: "Review", priority: 2, archived: false },
+  { id: 1, user_id: "preview", item_type: "message", sender: "Alex", platform: "iMessage", subject: null, content: "Can we confirm the time for tomorrow?", age: "2h", flag: "Reply", priority: 1, archived: false, unread: true, source_date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() },
+  { id: 2, user_id: "preview", item_type: "email", sender: "Building manager", platform: "Gmail", subject: "Annual access review", content: "Please review the attached access details this week.", age: "1d", flag: "Review", priority: 2, archived: false, unread: true, source_date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), source_url: "https://mail.google.com/" },
+];
+const PREVIEW_INBOX_SYNC: InboxSyncStatus[] = [
+  { user_id: "preview", source: "imessage", last_synced_at: new Date().toISOString(), last_sync_status: "success", last_sync_error: null, item_count: 1 },
+  { user_id: "preview", source: "gmail", last_synced_at: new Date().toISOString(), last_sync_status: "success", last_sync_error: null, item_count: 1 },
 ];
 
 type Toast = { message: string; error?: boolean } | null;
@@ -214,7 +191,7 @@ function PasswordRecovery({ onComplete, onToast }: { onComplete: () => void; onT
 function TaskRow({ task, onToggle, onActions }: { task: Task; onToggle: () => void; onActions: () => void }) {
   const due = dueLabel(task.due);
   return (
-    <article className={`task-row${task.done ? " done" : ""}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] ?? "#1f6f97" } as React.CSSProperties}>
+    <article className={`task-row${task.done ? " done" : ""}`} style={{ "--accent": CATEGORY_COLOURS[canonicalTaskCategory(task.cat, task.name)] } as React.CSSProperties}>
       <button className="check-button" onClick={onToggle} aria-label={`${task.done ? "Reopen" : "Complete"} ${task.name}`}>
         <span className="check-circle">{task.done && <Icon name="check" size={14} />}</span>
       </button>
@@ -260,7 +237,7 @@ function TaskActionDialog({ task, saving, onClose, onUpdate, onDelete }: {
           <div className="field">
             <label htmlFor="task-category">Category</label>
             <select id="task-category" className="select" value={task.cat} disabled={saving} onChange={(event) => onUpdate({ cat: event.target.value })}>
-              {Array.from(new Set([...TASK_CATEGORIES, task.cat])).map((category) => <option key={category}>{category}</option>)}
+              {TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
             </select>
           </div>
         </div>
@@ -296,9 +273,9 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
   const [view, setView] = useState<TaskView>("open");
   const [category, setCategory] = useState("All");
   const [newTask, setNewTask] = useState("");
-  const [newCategory, setNewCategory] = useState("Today");
+  const [newCategory, setNewCategory] = useState("Admin");
   const [selected, setSelected] = useState<Task | null>(null);
-  const categories = useMemo(() => Array.from(new Set([...TASK_CATEGORIES, ...tasks.map((task) => task.cat)])).sort((a, b) => a.localeCompare(b)), [tasks]);
+  const categories = useMemo(() => TASK_CATEGORIES.filter((item) => tasks.some((task) => task.cat === item)), [tasks]);
   const filtered = tasks.filter((task) => {
     if (view === "completed" && !task.done) return false;
     if (view !== "completed" && task.done) return false;
@@ -333,7 +310,7 @@ function TasksPage({ tasks, saving, onAdd, onToggle, onUpdate, onDelete }: {
       <div className="filter-row" aria-label="Filter by category">
         {["All", ...availableCategories].map((item) => <button key={item} className={`filter${category === item ? " active" : ""}`} onClick={() => setCategory(item)}>{item}</button>)}
       </div>
-      <section className="panel" style={{ "--accent": CATEGORY_COLOURS[category] ?? "#14384f" } as React.CSSProperties}>
+      <section className="panel" style={{ "--accent": category === "All" ? "#14384f" : CATEGORY_COLOURS[canonicalTaskCategory(category)] } as React.CSSProperties}>
         <div className="panel-header"><div className="panel-title"><h2>{category === "All" ? `${view[0].toUpperCase() + view.slice(1)} tasks` : category}</h2><p>{filtered.length} {filtered.length === 1 ? "item" : "items"}</p></div></div>
         <div className="panel-body">
           {filtered.length ? filtered.map((task) => <TaskRow key={task.id} task={task} onToggle={() => onToggle(task)} onActions={() => setSelected(task)} />) : <div className="empty-state">Nothing here. Add a task when you are ready.</div>}
@@ -367,6 +344,9 @@ function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, on
   const today = new Date();
   const [month, setMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected] = useState(toLocalISODate(today));
+  const [dayTab, setDayTab] = useState<"tasks" | "events">("tasks");
+  const taskTabRef = useRef<HTMLButtonElement>(null);
+  const eventTabRef = useRef<HTMLButtonElement>(null);
   const [adding, setAdding] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [title, setTitle] = useState("");
@@ -378,7 +358,13 @@ function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, on
   const leading = new Date(year, monthIndex, 1).getDay();
   const count = new Date(year, monthIndex + 1, 0).getDate();
   const days = Array.from({ length: leading + count }, (_, index) => index < leading ? null : index - leading + 1);
-  const datedTasks = tasks.filter((task) => dateForDue(task.due) === selected);
+  const taskOccursOnDate = (task: Task, date: string) => {
+    const completionDate = task.completed_at && !Number.isNaN(Date.parse(task.completed_at))
+      ? toLocalISODate(new Date(task.completed_at))
+      : null;
+    return dateForDue(task.due) === date || completionDate === date;
+  };
+  const datedTasks = tasks.filter((task) => taskOccursOnDate(task, selected));
   const datedEvents = events.filter((event) => event.date === selected);
 
   useEffect(() => setCalendarName(syncSettings?.calendar_name || "My calendar"), [syncSettings?.calendar_name]);
@@ -387,7 +373,28 @@ function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, on
     event.preventDefault();
     if (!title.trim()) return;
     onAdd({ title: title.trim(), date: selected, time: time || null, note: null });
+    setDayTab("events");
     setTitle(""); setTime(""); setAdding(false);
+  };
+
+  const selectDate = (date: string) => {
+    setSelected(date);
+    setDayTab("tasks");
+  };
+
+  const changeDayTab = (tab: "tasks" | "events", focus = false) => {
+    setDayTab(tab);
+    if (focus) (tab === "tasks" ? taskTabRef : eventTabRef).current?.focus();
+  };
+
+  const handleDayTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      changeDayTab(dayTab === "tasks" ? "events" : "tasks", true);
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      changeDayTab(event.key === "Home" ? "tasks" : "events", true);
+    }
   };
 
   const configureSync = async (event: FormEvent) => {
@@ -421,34 +428,85 @@ function CalendarPage({ tasks, events, saving, syncSettings, syncBusy, onAdd, on
           {days.map((day, index) => {
             if (!day) return <div key={`blank-${index}`} />;
             const date = toLocalISODate(new Date(year, monthIndex, day));
-            const hasItems = events.some((item) => item.date === date) || tasks.some((task) => dateForDue(task.due) === date);
+            const hasItems = events.some((item) => item.date === date) || tasks.some((task) => taskOccursOnDate(task, date));
             const className = `calendar-day${date === toLocalISODate(today) ? " today" : ""}${date === selected ? " selected" : ""}`;
-            return <button key={date} className={className} onClick={() => setSelected(date)} aria-label={new Date(`${date}T00:00:00`).toLocaleDateString("en-AU", { dateStyle: "full" })}>{day}{hasItems && <span className="dots"><span className="dot" /></span>}</button>;
+            return <button key={date} className={className} onClick={() => selectDate(date)} aria-label={new Date(`${date}T00:00:00`).toLocaleDateString("en-AU", { dateStyle: "full" })}>{day}{hasItems && <span className="dots"><span className="dot" /></span>}</button>;
           })}
         </div>
       </section>
       <div className="section-heading"><h2>{new Date(`${selected}T00:00:00`).toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h2></div>
-      {!datedTasks.length && !datedEvents.length && <div className="empty-state panel">No tasks or events on this date.</div>}
-      {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
-      {datedEvents.map((item) => <div className="event-row" key={`event-${item.id}`}><Icon name="calendar" /><div className="row-main"><strong>{item.title}</strong><p>{item.time || "All day"}{item.location ? ` · ${item.location}` : ""}{item.note ? ` · ${item.note}` : ""}</p>{item.source === "ical" && <span className="event-source">{item.source_calendar || "Synced calendar"} · read only</span>}</div>{item.source !== "ical" && <button className="icon-button danger" disabled={saving} onClick={() => onDelete(item)} aria-label={`Delete ${item.title}`}><Icon name="trash-2" /></button>}</div>)}
+      <div className="day-detail-tabs" role="tablist" aria-label="Items on selected date">
+        <button ref={taskTabRef} id="calendar-tasks-tab" className={`day-detail-tab${dayTab === "tasks" ? " active" : ""}`} role="tab" aria-selected={dayTab === "tasks"} aria-controls="calendar-tasks-panel" tabIndex={dayTab === "tasks" ? 0 : -1} onClick={() => changeDayTab("tasks")} onKeyDown={handleDayTabKeyDown}>Tasks <span>{datedTasks.length}</span></button>
+        <button ref={eventTabRef} id="calendar-events-tab" className={`day-detail-tab${dayTab === "events" ? " active" : ""}`} role="tab" aria-selected={dayTab === "events"} aria-controls="calendar-events-panel" tabIndex={dayTab === "events" ? 0 : -1} onClick={() => changeDayTab("events")} onKeyDown={handleDayTabKeyDown}>Events <span>{datedEvents.length}</span></button>
+      </div>
+      {dayTab === "tasks" ? (
+        <div id="calendar-tasks-panel" role="tabpanel" aria-labelledby="calendar-tasks-tab" tabIndex={0}>
+          {!datedTasks.length && <div className="empty-state panel">No tasks due or completed on this date.</div>}
+          {datedTasks.map((task) => <div className="event-row" key={`task-${task.id}`} style={{ "--accent": CATEGORY_COLOURS[task.cat] } as React.CSSProperties}><Icon name="check-square" /><div className="row-main"><strong>{task.name}</strong><p>{task.cat} task · {task.priority} priority</p></div></div>)}
+        </div>
+      ) : (
+        <div id="calendar-events-panel" role="tabpanel" aria-labelledby="calendar-events-tab" tabIndex={0}>
+          {!datedEvents.length && <div className="empty-state panel">No events scheduled for this date.</div>}
+          {datedEvents.map((item) => <div className="event-row" key={`event-${item.id}`}><Icon name="calendar" /><div className="row-main"><strong>{item.title}</strong><p>{item.time || "All day"}{item.location ? ` · ${item.location}` : ""}{item.note ? ` · ${item.note}` : ""}</p>{item.source === "ical" && <span className="event-source">{item.source_calendar || "Synced calendar"} · read only</span>}</div>{item.source !== "ical" && <button className="icon-button danger" disabled={saving} onClick={() => onDelete(item)} aria-label={`Delete ${item.title}`}><Icon name="trash-2" /></button>}</div>)}
+        </div>
+      )}
       {adding && <Dialog title="Add event" onClose={() => setAdding(false)}><form onSubmit={submit}><div className="field"><label htmlFor="event-title">Event name</label><input id="event-title" className="input" required value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field-row"><div className="field"><label htmlFor="event-date">Date</label><input id="event-date" className="input" type="date" required value={selected} onChange={(event) => setSelected(event.target.value)} /></div><div className="field"><label htmlFor="event-time">Time</label><input id="event-time" className="input" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></div></div><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setAdding(false)}>Cancel</button><button className="button" disabled={saving}>Add event</button></div></form></Dialog>}
       {configuring && <Dialog title="Calendar sync" onClose={() => setConfiguring(false)}><form onSubmit={configureSync}><p className="dialog-intro">In Google Calendar, open your calendar settings and copy the private address in iCal format. Townsend OS will only read it.</p><div className="field"><label htmlFor="calendar-name">Calendar name</label><input id="calendar-name" className="input" required value={calendarName} onChange={(event) => setCalendarName(event.target.value)} /></div><div className="field"><label htmlFor="calendar-feed">Private iCalendar address</label><input id="calendar-feed" className="input" type="url" inputMode="url" required placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value={feedUrl} onChange={(event) => setFeedUrl(event.target.value)} /><small>Stored privately. Never share this address or commit it to code.</small></div><div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setConfiguring(false)}>Cancel</button><button className="button" disabled={syncBusy || !feedUrl.trim()}>{syncBusy ? "Connecting…" : "Connect and sync"}</button></div></form></Dialog>}
     </main>
   );
 }
 
-function InboxPage({ items, saving, onArchive }: { items: InboxItem[]; saving: boolean; onArchive: (item: InboxItem) => void }) {
+function relativeAge(value?: string | null, fallback?: string | null) {
+  if (!value) return fallback || "";
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(value).toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+}
+
+function InboxPage({ items, syncStatus, saving, refreshing, onArchive, onRefresh }: {
+  items: InboxItem[];
+  syncStatus: InboxSyncStatus[];
+  saving: boolean;
+  refreshing: boolean;
+  onArchive: (item: InboxItem) => void;
+  onRefresh: () => void;
+}) {
   const [tab, setTab] = useState<"message" | "email">("message");
-  const current = items.filter((item) => !item.archived && item.item_type === tab).sort((a, b) => a.priority - b.priority);
+  const sourceStatus = (item: InboxItem) => syncStatus.find((status) => status.source === (item.item_type === "message" ? "imessage" : "gmail"));
+  const currentSnapshot = items.filter((item) => {
+    if (!item.external_id) return false;
+    const syncedAt = sourceStatus(item)?.last_synced_at;
+    if (!syncedAt || !item.updated_at) return true;
+    return new Date(item.updated_at).getTime() >= new Date(syncedAt).getTime() - 5 * 60_000;
+  });
+  const syncedItems = currentSnapshot.length || items.some((item) => item.external_id) ? currentSnapshot : items;
+  const current = syncedItems.filter((item) => !item.archived && item.item_type === tab).sort((a, b) => a.priority - b.priority || new Date(b.source_date || b.created_at || 0).getTime() - new Date(a.source_date || a.created_at || 0).getTime());
   const priority = current.filter((item) => item.priority === 1).slice(0, 3);
+  const source = tab === "message" ? "imessage" : "gmail";
+  const status = syncStatus.find((item) => item.source === source);
+  const messageCount = syncedItems.filter((item) => !item.archived && item.item_type === "message").length;
+  const emailCount = syncedItems.filter((item) => !item.archived && item.item_type === "email").length;
+  const syncAge = status?.last_synced_at ? relativeAge(status.last_synced_at) : "";
+  const syncCopy = status?.last_sync_status === "success" && status.last_synced_at
+    ? `Synced via ChatGPT ${syncAge === "now" ? "just now" : `${syncAge} ago`}`
+    : status?.last_sync_status === "error"
+      ? status.last_sync_error || "The last sync failed."
+      : "Waiting for the first ChatGPT sync.";
   return (
     <main className="content">
-      <div className="page-heading"><div><h1>Inbox</h1><p>Authenticated items that may need a response or action.</p></div></div>
-      <div className="stat-grid" aria-label="Inbox summary"><div className="stat"><strong>{items.filter((item) => !item.archived).length}</strong><span className="overline">Open</span></div><div className="stat danger"><strong>{items.filter((item) => !item.archived && item.priority === 1).length}</strong><span className="overline">Priority</span></div><div className="stat success"><strong>{items.filter((item) => item.archived).length}</strong><span className="overline">Archived</span></div></div>
-      <div className="segmented" role="group" aria-label="Inbox type"><button className={`segment${tab === "message" ? " active" : ""}`} onClick={() => setTab("message")}>Messages</button><button className={`segment${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email</button></div>
+      <div className="page-heading"><div><h1>Inbox</h1><p>Your recent iMessages and Gmail inbox, kept together.</p></div><button className="button secondary" disabled={refreshing} onClick={onRefresh}><Icon name="refresh-cw" /> {refreshing ? "Reloading…" : "Reload"}</button></div>
+      <div className="stat-grid" aria-label="Inbox summary"><div className="stat"><strong>{syncedItems.filter((item) => !item.archived).length}</strong><span className="overline">Open</span></div><div className="stat danger"><strong>{syncedItems.filter((item) => !item.archived && item.priority === 1).length}</strong><span className="overline">Priority</span></div><div className="stat success"><strong>{syncedItems.filter((item) => item.archived).length}</strong><span className="overline">Archived</span></div></div>
+      <div className="inbox-tabs" role="tablist" aria-label="Inbox source"><button role="tab" aria-selected={tab === "message"} className={`inbox-tab${tab === "message" ? " active" : ""}`} onClick={() => setTab("message")}>iMessages <span>{messageCount}</span></button><button role="tab" aria-selected={tab === "email"} className={`inbox-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Gmail inbox <span>{emailCount}</span></button></div>
+      <div className={`inbox-sync-status${status?.last_sync_status === "error" ? " error" : ""}`} role="status"><span className={`sync-dot${status?.last_sync_status === "success" ? " success" : status?.last_sync_status === "error" ? " error" : ""}`} /><span>{syncCopy}</span></div>
       {priority.length > 0 && <aside className="triage"><span className="overline">Do these first</span><ol>{priority.map((item) => <li key={item.id}>{item.subject || `${item.platform || "Message"} from ${item.sender}`}</li>)}</ol></aside>}
-      {!current.length && <div className="empty-state panel">No open {tab === "message" ? "messages" : "emails"}.</div>}
-      {current.map((item) => <article className="inbox-card" key={item.id} style={{ "--accent": item.priority === 1 ? "#ae3b2e" : item.priority === 2 ? "#b07a12" : "#1f6f97" } as React.CSSProperties}><div className="inbox-head"><div><div className="inbox-sender">{item.sender}</div><div className="task-meta"><span className="badge neutral">{item.platform || (tab === "message" ? "Message" : "Email")}</span>{item.flag && <span className="badge warning">{item.flag}</span>}</div></div><span className="inbox-age">{item.age || ""}</span></div>{item.subject && <div className="inbox-subject">{item.subject}</div>}<p className="inbox-content">{item.content}</p><div className="dialog-actions"><button className="button secondary" disabled={saving} onClick={() => onArchive(item)}><Icon name="archive" /> Archive</button></div></article>)}
+      {!current.length && <div className="empty-state panel">No open {tab === "message" ? "iMessages" : "Gmail messages"}.</div>}
+      {current.map((item) => <article className="inbox-card" key={item.id} style={{ "--accent": item.priority === 1 ? "#ae3b2e" : item.priority === 2 ? "#b07a12" : "#1f6f97" } as React.CSSProperties}><div className="inbox-head"><div><div className="inbox-sender">{item.sender}</div><div className="task-meta"><span className="badge neutral">{item.platform || (tab === "message" ? "iMessage" : "Gmail")}</span>{item.unread && <span className="badge info">Unread</span>}{item.flag && <span className="badge warning">{item.flag}</span>}</div></div><span className="inbox-age">{relativeAge(item.source_date, item.age)}</span></div>{item.subject && <div className="inbox-subject">{item.subject}</div>}<p className="inbox-content">{item.content}</p><div className="dialog-actions">{item.source_url && <a className="button secondary" href={item.source_url} target="_blank" rel="noreferrer">Open in Gmail</a>}<button className="button secondary" disabled={saving} onClick={() => onArchive(item)}><Icon name="archive" /> Archive</button></div></article>)}
     </main>
   );
 }
@@ -488,6 +546,8 @@ export default function App() {
   const [syncBusy, setSyncBusy] = useState(false);
   const syncBusyRef = useRef(false);
   const [inbox, setInbox] = useState<InboxItem[]>(preview ? PREVIEW_INBOX : []);
+  const [inboxSync, setInboxSync] = useState<InboxSyncStatus[]>(preview ? PREVIEW_INBOX_SYNC : []);
+  const [inboxRefreshing, setInboxRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<Toast>(null);
   const userId = session?.user.id;
@@ -513,6 +573,7 @@ export default function App() {
         setEvents([]);
         setCalendarSync(null);
         setInbox([]);
+        setInboxSync([]);
       }
     });
     return () => data.subscription.unsubscribe();
@@ -522,29 +583,52 @@ export default function App() {
     if (preview) return;
     if (!userId) return;
     setLoading(true); setError("");
-    const [taskResult, billResult, eventResult, inboxResult, calendarSyncResult] = await Promise.all([
+    const [taskResult, billResult, eventResult, inboxResult, calendarSyncResult, inboxSyncResult] = await Promise.all([
       supabase.from("tasks").select("*").order("created_at", { ascending: true }),
       supabase.from("bills").select("*").order("created_at", { ascending: true }),
       supabase.from("events").select("*").order("date", { ascending: true }),
       supabase.from("inbox_items").select("*").order("priority", { ascending: true }).order("created_at", { ascending: false }),
       supabase.from("calendar_sync_settings").select("calendar_name, enabled, last_synced_at, last_sync_status, last_sync_error").maybeSingle(),
+      supabase.from("inbox_sync_status").select("user_id, source, last_synced_at, last_sync_status, last_sync_error, item_count"),
     ]);
-    const firstError = taskResult.error || billResult.error || eventResult.error || inboxResult.error || calendarSyncResult.error;
+    const firstError = taskResult.error || billResult.error || eventResult.error || inboxResult.error || calendarSyncResult.error || inboxSyncResult.error;
     if (firstError) {
       if (import.meta.env.DEV) console.error("Workspace load failed", firstError);
       setError("Unable to load your workspace. Please try again.");
     }
     else {
-      setTasks((taskResult.data ?? []) as Task[]);
+      setTasks(((taskResult.data ?? []) as Task[]).map(canonicalizeTask));
       setBills((billResult.data ?? []) as Bill[]);
       setEvents((eventResult.data ?? []) as CalendarEvent[]);
       setInbox((inboxResult.data ?? []) as InboxItem[]);
+      setInboxSync((inboxSyncResult.data ?? []) as InboxSyncStatus[]);
       setCalendarSync(calendarSyncResult.data as CalendarSyncSettings | null);
     }
     setLoading(false);
   }, [preview, userId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const refreshInbox = useCallback(async () => {
+    if (preview || !userId) return;
+    setInboxRefreshing(true);
+    const [itemsResult, statusResult] = await Promise.all([
+      supabase.from("inbox_items").select("*").order("priority", { ascending: true }).order("source_date", { ascending: false }),
+      supabase.from("inbox_sync_status").select("user_id, source, last_synced_at, last_sync_status, last_sync_error, item_count"),
+    ]);
+    if (itemsResult.error || statusResult.error) showToast({ message: "The inbox could not be reloaded.", error: true });
+    else {
+      setInbox((itemsResult.data ?? []) as InboxItem[]);
+      setInboxSync((statusResult.data ?? []) as InboxSyncStatus[]);
+    }
+    setInboxRefreshing(false);
+  }, [preview, showToast, userId]);
+
+  useEffect(() => {
+    if (page !== "inbox" || preview) return;
+    const timer = window.setInterval(() => void refreshInbox(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [page, preview, refreshInbox]);
 
   const runMutation = async (action: () => PromiseLike<{ error: { message: string } | null }>, onSuccess: () => void, success: string) => {
     setSaving(true);
@@ -562,22 +646,26 @@ export default function App() {
   };
 
   const addTask = async (name: string, cat: string) => {
-    if (preview) { setTasks((items) => [...items, { id: Date.now(), user_id: "preview", name, cat, done: false, priority: "medium", due: null, urgent: false }]); showToast({ message: "Task added in preview." }); return; }
+    const canonicalCategory = canonicalTaskCategory(cat, name);
+    if (preview) { setTasks((items) => [...items, { id: Date.now(), user_id: "preview", name, cat: canonicalCategory, done: false, priority: "medium", due: null, urgent: false }]); showToast({ message: "Task added in preview." }); return; }
     if (!userId) return;
     setSaving(true);
     try {
-      const { data, error: insertError } = await supabase.from("tasks").insert({ user_id: userId, name, cat, done: false, priority: "medium", due: null, urgent: false }).select().single();
+      const { data, error: insertError } = await supabase.from("tasks").insert({ user_id: userId, name, cat: canonicalCategory, done: false, priority: "medium", due: null, urgent: false }).select().single();
       if (insertError) throw insertError;
-      setTasks((items) => [...items, data as Task]); showToast({ message: "Task added." });
+      setTasks((items) => [...items, canonicalizeTask(data as Task)]); showToast({ message: "Task added." });
     } catch (caught) { if (import.meta.env.DEV) console.error("Task insert failed", caught); showToast({ message: "The task could not be added. Please try again.", error: true }); }
     finally { setSaving(false); }
   };
 
-  const updateTask = (task: Task, changes: Partial<Task>) => runMutation(
-    () => preview ? Promise.resolve({ error: null }) : supabase.from("tasks").update(changes).eq("id", task.id).eq("user_id", userId!).select("id").single(),
-    () => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...changes } : item)),
+  const updateTask = (task: Task, changes: Partial<Task>) => {
+    const normalizedChanges = changes.cat ? { ...changes, cat: canonicalTaskCategory(changes.cat, task.name) } : changes;
+    return runMutation(
+    () => preview ? Promise.resolve({ error: null }) : supabase.from("tasks").update(normalizedChanges).eq("id", task.id).eq("user_id", userId!).select("id").single(),
+    () => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...normalizedChanges } : item)),
     changes.done === true ? "Task completed." : changes.done === false ? "Task reopened." : "Task updated.",
   );
+  };
 
   const deleteTask = (task: Task) => runMutation(() => preview ? Promise.resolve({ error: null }) : supabase.from("tasks").delete().eq("id", task.id).eq("user_id", userId!).select("id").single(), () => setTasks((items) => items.filter((item) => item.id !== task.id)), "Task deleted.");
 
@@ -671,7 +759,7 @@ export default function App() {
       {loading ? <div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading your workspace…</div></div> : <>
         {page === "tasks" && <TasksPage tasks={tasks} saving={saving} onAdd={addTask} onToggle={(task) => updateTask(task, { done: !task.done, completed_at: task.done ? null : new Date().toISOString() })} onUpdate={updateTask} onDelete={deleteTask} />}
         {page === "calendar" && <CalendarPage tasks={tasks} events={events} saving={saving} syncSettings={calendarSync} syncBusy={syncBusy} onAdd={addEvent} onDelete={deleteEvent} onConfigureSync={configureCalendarSync} onSync={() => syncCalendar(true)} />}
-        {page === "inbox" && <InboxPage items={inbox} saving={saving} onArchive={archiveInbox} />}
+        {page === "inbox" && <InboxPage items={inbox} syncStatus={inboxSync} saving={saving} refreshing={inboxRefreshing} onArchive={archiveInbox} onRefresh={() => void refreshInbox()} />}
         {page === "bills" && <BillsPage bills={bills} saving={saving} onAdd={addBill} onDelete={deleteBill} />}
         {page === "wealth" && <Suspense fallback={<div className="loading-screen"><div className="loading-state"><span className="spinner" /> Loading Wealth…</div></div>}><WealthPage preview={preview} userId={userId || "preview"} onToast={showToast} /></Suspense>}
       </>}
