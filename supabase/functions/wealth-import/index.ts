@@ -263,7 +263,7 @@ Deno.serve(async (request) => {
     }
     const excluded = transactionType === "excluded" || transactionType === "transfer";
     const unknown = normal(merchant) === "unknown";
-    records.push({ user_id: user.id, import_batch_id: batch.id, dedupe_key: dedupeKey, transaction_date: date, description, merchant_name: merchant, amount, direction, account_source: account || "Unknown", budget_category: budgetCategory, category_name: categoryName || "Uncategorised", subcategory, transaction_type: transactionType, expense_class: className, day_of_week: columns.day >= 0 ? text(row[columns.day]) || null : null, fortnight_index: columns.fortnight >= 0 ? text(row[columns.fortnight]) : null, is_excluded: excluded, review_status: excluded ? "excluded" : unknown ? "pending" : "confirmed", source_sheet: transactionSheet, source_row_number: index + 1, raw_row_json: rawObject(headers, row) });
+    records.push({ user_id: user.id, import_batch_id: batch.id, dedupe_key: dedupeKey, transaction_date: date, description, merchant_name: merchant, amount, direction, account_source: account || "Unknown", budget_category: budgetCategory, category_name: categoryName || "Uncategorised", subcategory, transaction_type: transactionType, expense_class: className, day_of_week: columns.day >= 0 ? text(row[columns.day]) || null : null, fortnight_index: columns.fortnight >= 0 ? text(row[columns.fortnight]) : null, is_duplicate_candidate: false, is_excluded: excluded, review_status: excluded ? "excluded" : unknown ? "pending" : "confirmed", source_sheet: transactionSheet, source_row_number: index + 1, raw_row_json: rawObject(headers, row) });
   }
 
   if (!records.length && !deduplicated) {
