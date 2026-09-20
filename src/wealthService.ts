@@ -272,7 +272,17 @@ export async function importWealthWorkbook(file: File, strategy: "append" | "rep
   body.append("file", file);
   body.append("dedup_strategy", strategy);
   const { data, error } = await supabase.functions.invoke("wealth-import", { body });
-  if (error) throw error;
+  if (error) {
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      let payload: { error?: unknown } | null = null;
+      try {
+        payload = await response.clone().json() as { error?: unknown };
+      } catch { /* Fall back to the SDK error when the response is not JSON. */ }
+      if (typeof payload?.error === "string" && payload.error.trim()) throw new Error(payload.error);
+    }
+    throw error;
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }

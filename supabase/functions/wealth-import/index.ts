@@ -9,7 +9,7 @@ const corsHeaders = {
 const MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 80 * 1024 * 1024;
 const MAX_ZIP_ENTRIES = 200;
-const MAX_SHEETS = 12;
+const MAX_SHEETS = 24;
 const MAX_ROWS_PER_SHEET = 50_000;
 const MAX_COLUMNS_PER_SHEET = 100;
 const MAX_CELLS_PER_WORKBOOK = 1_000_000;
@@ -33,7 +33,7 @@ function validateZipEnvelope(bytes: Uint8Array) {
 }
 
 function validateWorkbookShape(workbook: XLSX.WorkBook) {
-  if (workbook.SheetNames.length > MAX_SHEETS) throw new Error(`The workbook has more than ${MAX_SHEETS} sheets`);
+  if (workbook.SheetNames.length > MAX_SHEETS) throw new Error(`The workbook has ${workbook.SheetNames.length} sheets; the import limit is ${MAX_SHEETS}`);
   let totalCells = 0;
   for (const sheetName of workbook.SheetNames) {
     const ref = workbook.Sheets[sheetName]?.["!ref"];
