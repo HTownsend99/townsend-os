@@ -6,8 +6,7 @@ export type WealthView =
   | "property"
   | "recurring"
   | "budgets"
-  | "review"
-  | "import";
+  | "review";
 
 export interface WealthOverview {
   total_spend: number;
