@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
 import { Icon } from "./Icon";
 import {
   excludeDuplicate,
-  importWealthWorkbook,
   loadWealthSnapshot,
   resolveMerchant,
   saveBudgetTarget,
@@ -28,7 +26,6 @@ const VIEWS: Array<{ id: WealthView; label: string }> = [
   { id: "recurring", label: "Fixed costs" },
   { id: "budgets", label: "Budgets" },
   { id: "review", label: "Review" },
-  { id: "import", label: "Import" },
 ];
 
 const CATEGORIES = [
@@ -53,7 +50,7 @@ const titleCase = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (
 const errorText = (error: unknown) => error instanceof Error ? error.message : "The Wealth data source could not complete that request.";
 
 function SourceNote({ preview }: { preview: boolean }) {
-  return <span className="wealth-source">{preview ? "Preview data" : "Townsend OS data"} · owner only</span>;
+  return <span className="wealth-source">{preview ? "Preview data" : "Redbark live data"} · owner only</span>;
 }
 
 function EmptyWealth({ title, children }: { title: string; children: React.ReactNode }) {
@@ -116,12 +113,12 @@ function Overview({ data, preview }: { data: WealthSnapshot; preview: boolean })
 
 function Trends({ data }: { data: WealthSnapshot }) {
   const rows = data.trends.periods.map((period, index) => ({ label: period.slice(5) + "/" + period.slice(2, 4), spend: data.trends.total_series[index] || 0 }));
-  return <section className="wealth-panel wealth-wide-panel"><div className="wealth-panel-head"><div><h2>Spending trends</h2><p>Personal spending across the selected period.</p></div></div>{rows.length ? <BarChart rows={rows} height={360} /> : <EmptyWealth title="No trend data">Import transactions to reveal spending patterns over time.</EmptyWealth>}</section>;
+  return <section className="wealth-panel wealth-wide-panel"><div className="wealth-panel-head"><div><h2>Spending trends</h2><p>Personal spending across the selected period.</p></div></div>{rows.length ? <BarChart rows={rows} height={360} /> : <EmptyWealth title="No trend data">Bank transactions will appear here after the next Redbark sync.</EmptyWealth>}</section>;
 }
 
 function Categories({ categories }: { categories: WealthCategory[] }) {
   const [open, setOpen] = useState<string | null>(categories[0]?.category ?? null);
-  if (!categories.length) return <EmptyWealth title="No category data">Import transactions before analysing categories.</EmptyWealth>;
+  if (!categories.length) return <EmptyWealth title="No category data">Bank transactions will appear here after the next Redbark sync.</EmptyWealth>;
   return <section className="wealth-panel wealth-wide-panel"><div className="wealth-panel-head"><div><h2>Category analysis</h2><p>Expand a category to trace spending to merchants.</p></div></div><div className="wealth-accordion">{categories.map((category) => <div key={category.category} className="wealth-accordion-item"><button onClick={() => setOpen(open === category.category ? null : category.category)} aria-expanded={open === category.category}><span><strong>{category.category}</strong><small>{category.count} transactions</small></span><span>{money(category.amount, true)} <Icon name="chevron-down" size={16} /></span></button>{open === category.category && <div className="wealth-accordion-body">{category.subcategories.map((sub) => <div key={sub.subcategory}><div><strong>{sub.subcategory}</strong><span>{money(sub.amount, true)}</span></div>{sub.merchants.slice(0, 8).map((merchant) => <p key={merchant.merchant}><span>{merchant.merchant} · {merchant.count}</span><span>{money(merchant.amount, true)}</span></p>)}</div>)}</div>}</div>)}</div></section>;
 }
 
@@ -182,22 +179,6 @@ function Review({ data, preview, reload, notify, userId }: { data: WealthSnapsho
   </section></>;
 }
 
-function ImportData({ preview, reload, notify }: { preview: boolean; reload: () => Promise<void>; notify: (message: string, error?: boolean) => void }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [strategy, setStrategy] = useState<"append" | "replace">("append");
-  const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!file) return notify("Choose an XLSX workbook first.", true);
-    if (preview) return notify("Workbook checked in preview. No data was uploaded.");
-    setBusy(true);
-    try { await importWealthWorkbook(file, strategy); await reload(); notify("Workbook imported."); setFile(null); }
-    catch (error) { notify(errorText(error), true); }
-    finally { setBusy(false); }
-  };
-  return <div className="wealth-import-grid"><form className="wealth-panel wealth-import" onSubmit={submit}><label><Icon name="upload" size={28} /><strong>{file ? file.name : "Choose an XLSX workbook"}</strong><span>{file ? `${Math.round(file.size / 1024)} KB ready to import` : "Select the cleaned Frollo workbook from your computer"}</span><input type="file" accept=".xlsx" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label><div><select value={strategy} onChange={(event) => setStrategy(event.target.value as "append" | "replace")} aria-label="Import behaviour"><option value="append">Append and deduplicate</option><option value="replace">Replace existing data</option></select><button className="button" disabled={!file || busy}>{busy ? "Importing…" : "Import workbook"}</button></div></form><aside className="wealth-panel wealth-import-notes"><h2>What happens</h2><ol><li>Required transaction fields are validated.</li><li>Existing transaction identities are checked.</li><li>Saved merchant mappings are applied.</li><li>Import counts and source rows remain auditable.</li></ol><p>Replace keeps the existing records until the new workbook has been written successfully. Use append for normal monthly imports.</p></aside></div>;
-}
-
 export function WealthPage({ preview, userId, onToast }: { preview: boolean; userId: string; onToast: (toast: { message: string; error?: boolean } | null) => void }) {
   const [view, setView] = useState<WealthView>("overview");
   const [loading, setLoading] = useState(false);
@@ -253,13 +234,12 @@ export function WealthPage({ preview, userId, onToast }: { preview: boolean; use
     recurring: ["Fixed costs", "Review recurring commitments and subscriptions."],
     budgets: ["Budgets", "Set category targets and monitor what remains."],
     review: ["Review transactions", "Resolve unknown merchants, flagged items and possible duplicates before they affect reporting."],
-    import: ["Import workbook", "Append the latest cleaned financial data with an audit trail."],
   }[view]), [view]);
 
   return <main className="wealth-page">
     <nav className="wealth-tabs" aria-label="Wealth sections">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined}>{item.label}{item.id === "review" && data && data.review.summary.unknown_count + data.review.summary.flagged_count > 0 ? <span>{data.review.summary.unknown_count + data.review.summary.flagged_count}</span> : null}</button>)}</nav>
     <div className="wealth-content">
-      <div className="wealth-heading"><div><h1>{heading[0]}</h1><p>{heading[1]}</p></div>{!(["review", "import"] as WealthView[]).includes(view) && <div className="wealth-filters"><select value={preset} onChange={(event) => applyPreset(event.target.value)} aria-label="Period"><option value="">Custom range</option><option value="this_month">This month</option><option value="last_3">Last 3 months</option><option value="fytd">FY to date</option><option value="all">All time</option></select><label>From<input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPreset(""); setData(null); }} /></label><label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setPreset(""); setData(null); }} /></label><button className="button secondary icon-only" onClick={() => load()} disabled={loading} aria-label="Refresh Wealth"><Icon name="refresh-cw" /></button><button className="button" onClick={() => setView("import")}><Icon name="upload" size={17} /> Import</button></div>}</div>
+      <div className="wealth-heading"><div><h1>{heading[0]}</h1><p>{heading[1]}</p></div>{!(["review"] as WealthView[]).includes(view) && <div className="wealth-filters"><select value={preset} onChange={(event) => applyPreset(event.target.value)} aria-label="Period"><option value="">Custom range</option><option value="this_month">This month</option><option value="last_3">Last 3 months</option><option value="fytd">FY to date</option><option value="all">All time</option></select><label>From<input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPreset(""); setData(null); }} /></label><label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setPreset(""); setData(null); }} /></label><button className="button secondary icon-only" onClick={() => load()} disabled={loading} aria-label="Refresh Wealth"><Icon name="refresh-cw" /></button></div>}</div>
       {loading && !data ? <div className="loading-state"><span className="spinner" /> Loading Wealth…</div> : data ? <>
         {view === "overview" && <Overview data={data} preview={preview} />}
         {view === "trends" && <Trends data={data} />}
@@ -269,7 +249,6 @@ export function WealthPage({ preview, userId, onToast }: { preview: boolean; use
         {view === "recurring" && <Recurring data={data} preview={preview} reload={load} notify={notify} />}
         {view === "budgets" && <Budgets data={data} preview={preview} reload={load} notify={notify} month={budgetMonth} userId={userId} />}
         {view === "review" && <Review data={data} preview={preview} reload={load} notify={notify} userId={userId} />}
-        {view === "import" && <ImportData preview={preview} reload={load} notify={notify} />}
       </> : <EmptyWealth title="Wealth data is unavailable">Check the Townsend OS database and try again.</EmptyWealth>}
     </div>
   </main>;
