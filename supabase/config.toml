@@ -4,6 +4,9 @@ verify_jwt = true
 [functions.wealth-import]
 verify_jwt = true
 
+[functions.redbark-webhook]
+verify_jwt = false
+
 [functions.calendar-sync]
 verify_jwt = true
 
