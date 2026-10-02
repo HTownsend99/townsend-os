@@ -15,6 +15,7 @@ The `wealth-import` Edge Function validates cleaned Frollo XLSX workbooks, prese
 The function requires Supabase secrets `REDBARK_WEBHOOK_SECRET`, `REDBARK_ALLOWED_ACCOUNT_IDS` (the two comma-separated Redbark source account UUIDs) and `WEALTH_OWNER_USER_ID`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function. Deploy the migration and function before creating a Redbark webhook destination. In Redbark, create one HTTPS webhook destination pointing to the `redbark-webhook` function and use separate syncs for NetBank Saver and Smart Access. Start each sync after its last verified Frollo transaction date. Keep pending transactions off. Check the Redbark Deliveries view and the new Wealth rows after each first sync.
 
 The webhook only accepts the configured accounts and AUD transactions dated within the latest 12 months. This intake rule does not remove older Wealth records already present in Supabase; retention cleanup is separate from the live sync.
+An open Wealth page refreshes when its browser tab becomes visible and every 15 minutes while visible, so newly delivered records appear without a manual page reload.
 
 For a data-safe local review, use `http://127.0.0.1:5173/?preview&page=wealth`. Preview mode uses fictional records and never writes to Supabase.
 

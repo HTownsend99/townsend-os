@@ -221,6 +221,17 @@ export function WealthPage({ preview, userId, onToast }: { preview: boolean; use
 
   useEffect(() => { if (!data) void load(); }, [data, load]);
 
+  useEffect(() => {
+    if (preview) return;
+    const refreshWhenVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const interval = window.setInterval(refreshWhenVisible, 15 * 60 * 1000);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [preview, load]);
+
   const applyPreset = (value: string) => {
     setPreset(value);
     const today = new Date();
